@@ -567,7 +567,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
         set(GLEW-INCLUDE ${GLEW_INCLUDE_DIRS})
     endif()
     set(SDL2-INCLUDE ${SDL2_INCLUDE_DIRS})
-elseif (CMAKE_SYSTEM_NAME MATCHES "NintendoSwitch|CafeOS")
+elseif (CMAKE_SYSTEM_NAME MATCHES "NintendoSwitch|CafeOS|PSVita")
     find_package(SDL2)
 else()
     find_package(SDL2)
@@ -723,6 +723,19 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "CafeOS")
     )
     target_include_directories(${PROJECT_NAME} PRIVATE
         ${DEVKITPRO}/portlibs/wiiu/include/
+    )
+elseif(CMAKE_SYSTEM_NAME STREQUAL "PSVita")
+    set(THREADS_PREFER_PTHREAD_FLAG ON)
+    find_package(Threads REQUIRED)
+    target_link_libraries(${PROJECT_NAME}
+        storm
+        SDL2::SDL2
+        vitaGL
+        vitashark
+        SceShaccCgExt
+        taihen_stub
+        SceShaccCg_stub
+        Threads::Threads
     )
 else()
     target_link_libraries(${PROJECT_NAME}

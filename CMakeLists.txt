@@ -14,12 +14,15 @@ set(PROJECT_TEAM "github.com/harbourmasters" CACHE STRING "")
 set_property(DIRECTORY ${CMAKE_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT soh)
 add_compile_options($<$<CXX_COMPILER_ID:MSVC>:/MP>)
 
+if (CMAKE_SYSTEM_NAME STREQUAL "Generic")
+    set(CMAKE_SYSTEM_NAME "PSVita")
+endif()
+
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
 include(CMake/automate-vcpkg.cmake)
 
 set(VCPKG_TRIPLET x64-windows-static)
 set(VCPKG_TARGET_TRIPLET x64-windows-static)
-
 vcpkg_bootstrap()
 vcpkg_install_packages(zlib bzip2 libpng SDL2 SDL2-net GLEW glfw3)
 endif()
@@ -42,7 +45,7 @@ endif()
 ################################################################################
 # Global configuration types
 ################################################################################
-if (CMAKE_SYSTEM_NAME STREQUAL "NintendoSwitch")
+if (CMAKE_SYSTEM_NAME MATCHES "NintendoSwitch|PSVita")
 set(CMAKE_C_FLAGS_DEBUG "-O3 -ffast-math")
 set(CMAKE_CXX_FLAGS_DEBUG "-O3 -ffast-math")
 set(CMAKE_C_FLAGS_RELEASE "-O3 -ffast-math -DNDEBUG")
@@ -119,7 +122,8 @@ add_subdirectory(ZAPDTR/ZAPD ${CMAKE_BINARY_DIR}/ZAPD)
 add_subdirectory(ZAPDTR/ZAPDUtils ${CMAKE_BINARY_DIR}/ZAPDUtils)
 add_subdirectory(OTRExporter)
 add_subdirectory(soh)
-if(NOT CMAKE_SYSTEM_NAME MATCHES "Darwin|NintendoSwitch|CafeOS")
+
+if(NOT CMAKE_SYSTEM_NAME MATCHES "Darwin|NintendoSwitch|CafeOS|PSVita")
 add_subdirectory(OTRGui)
 endif()
 
@@ -198,13 +202,13 @@ install(CODE "
 
 endif()
 
-if(CMAKE_SYSTEM_NAME MATCHES "Windows|NintendoSwitch|CafeOS")
+if(CMAKE_SYSTEM_NAME MATCHES "Windows|NintendoSwitch|CafeOS|PSVita")
 install(FILES ${CMAKE_SOURCE_DIR}/README.md DESTINATION . COMPONENT ship RENAME readme.txt )
 endif()
 
 if(CMAKE_SYSTEM_NAME MATCHES "Linux")
     set(CPACK_GENERATOR "External")
-elseif(CMAKE_SYSTEM_NAME MATCHES "Windows|NintendoSwitch|CafeOS")
+elseif(CMAKE_SYSTEM_NAME MATCHES "Windows|NintendoSwitch|CafeOS|PSVita")
     set(CPACK_GENERATOR "ZIP")
 elseif(CMAKE_SYSTEM_NAME MATCHES "Darwin")
     set(CPACK_GENERATOR "Bundle")
