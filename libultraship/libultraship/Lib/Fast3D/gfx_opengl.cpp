@@ -36,7 +36,11 @@
 #include <glad/glad.h>
 #else
 #include <SDL2/SDL.h>
+#ifndef __vita__
 #include <GL/glew.h>
+#else
+#include <vitaGL.h>
+#endif
 #define GL_GLEXT_PROTOTYPES 1
 // #include <SDL2/SDL_opengles2.h>
 #endif
@@ -59,7 +63,16 @@ struct ShaderProgram {
     uint8_t num_attribs;
     GLint frame_count_location;
     GLint noise_scale_location;
+#ifdef __vita__
+	GLint uTexSize[2];
+#endif
 };
+
+#ifdef __vita__
+#include <vitasdk.h>
+float tex_size[2][2];
+ShaderProgram *cur_gl_program;
+#endif
 
 struct Framebuffer {
     uint32_t width, height;
@@ -120,6 +133,9 @@ static void gfx_opengl_load_shader(struct ShaderProgram *new_prg) {
     glUseProgram(new_prg->opengl_program_id);
     gfx_opengl_vertex_array_set_attribs(new_prg);
     gfx_opengl_set_uniforms(new_prg);
+#ifdef __vita__
+    cur_gl_program = new_prg;
+#endif
 }
 
 static void append_str(char *buf, size_t *len, const char *str) {
@@ -233,10 +249,17 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     size_t fs_len = 0;
     size_t num_floats = 4;
 
+#ifdef __vita__
+	int texcoord_id = 0;
+#endif
+
     // Vertex shader
 #ifdef __APPLE__
     append_line(vs_buf, &vs_len, "#version 410 core");
     append_line(vs_buf, &vs_len, "in vec4 aVtxPos;");
+#elif defined(__vita__)
+    append_line(vs_buf, &vs_len, "void main(");
+    append_line(vs_buf, &vs_len, "float4 aVtxPos,");
 #else
     append_line(vs_buf, &vs_len, "#version 110");
     append_line(vs_buf, &vs_len, "attribute vec4 aVtxPos;");
@@ -246,6 +269,9 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
         #ifdef __APPLE__
             vs_len += sprintf(vs_buf + vs_len, "in vec2 aTexCoord%d;\n", i);
             vs_len += sprintf(vs_buf + vs_len, "out vec2 vTexCoord%d;\n", i);
+        #elif defined(__vita__)
+            vs_len += sprintf(vs_buf + vs_len, "float2 aTexCoord%d,\n", i);
+            vs_len += sprintf(vs_buf + vs_len, "float2 out vTexCoord%d : TEXCOORD%d,\n", i, texcoord_id++);
         #else
             vs_len += sprintf(vs_buf + vs_len, "attribute vec2 aTexCoord%d;\n", i);
             vs_len += sprintf(vs_buf + vs_len, "varying vec2 vTexCoord%d;\n", i);
@@ -256,6 +282,9 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
                 #ifdef __APPLE__
                     vs_len += sprintf(vs_buf + vs_len, "in float aTexClamp%s%d;\n", j == 0 ? "S" : "T", i);
                     vs_len += sprintf(vs_buf + vs_len, "out float vTexClamp%s%d;\n", j == 0 ? "S" : "T", i);
+				#elif defined(__vita__)
+                    vs_len += sprintf(vs_buf + vs_len, "float aTexClamp%s%d,\n", j == 0 ? "S" : "T", i);
+                    vs_len += sprintf(vs_buf + vs_len, "float out vTexClamp%s%d : TEXCOORD%d,\n", j == 0 ? "S" : "T", i, texcoord_id++);		
                 #else
                     vs_len += sprintf(vs_buf + vs_len, "attribute float aTexClamp%s%d;\n", j == 0 ? "S" : "T", i);
                     vs_len += sprintf(vs_buf + vs_len, "varying float vTexClamp%s%d;\n", j == 0 ? "S" : "T", i);
@@ -269,6 +298,9 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     #ifdef __APPLE__
         append_line(vs_buf, &vs_len, "in vec4 aFog;");
         append_line(vs_buf, &vs_len, "out vec4 vFog;");
+	#elif defined(__vita__)
+        append_line(vs_buf, &vs_len, "float4 aFog,");
+        vs_len += sprintf(vs_buf + vs_len, "float4 out vFog : TEXCOORD%d,", texcoord_id++);
     #else
         append_line(vs_buf, &vs_len, "attribute vec4 aFog;");
         append_line(vs_buf, &vs_len, "varying vec4 vFog;");
@@ -280,6 +312,9 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     #ifdef __APPLE__
         append_line(vs_buf, &vs_len, "in vec4 aGrayscaleColor;");
         append_line(vs_buf, &vs_len, "out vec4 vGrayscaleColor;");
+	#elif defined(__vita__)
+        append_line(vs_buf, &vs_len, "float4 aGrayscaleColor,");
+        append_line(vs_buf, &vs_len, "float4 out vGrayscaleColor : COLOR,");
     #else
         append_line(vs_buf, &vs_len, "attribute vec4 aGrayscaleColor;");
         append_line(vs_buf, &vs_len, "varying vec4 vGrayscaleColor;");
@@ -291,13 +326,20 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     #ifdef __APPLE__
         vs_len += sprintf(vs_buf + vs_len, "in vec%d aInput%d;\n", cc_features.opt_alpha ? 4 : 3, i + 1);
         vs_len += sprintf(vs_buf + vs_len, "out vec%d vInput%d;\n", cc_features.opt_alpha ? 4 : 3, i + 1);
+	#elif defined(__vita__)
+        vs_len += sprintf(vs_buf + vs_len, "float%d aInput%d,\n", cc_features.opt_alpha ? 4 : 3, i + 1);
+        vs_len += sprintf(vs_buf + vs_len, "float%d out vInput%d : TEXCOORD%d,\n", cc_features.opt_alpha ? 4 : 3, i + 1, texcoord_id++);	
     #else
         vs_len += sprintf(vs_buf + vs_len, "attribute vec%d aInput%d;\n", cc_features.opt_alpha ? 4 : 3, i + 1);
         vs_len += sprintf(vs_buf + vs_len, "varying vec%d vInput%d;\n", cc_features.opt_alpha ? 4 : 3, i + 1);
     #endif
         num_floats += cc_features.opt_alpha ? 4 : 3;
     }
+	#ifdef __vita__
+	append_line(vs_buf, &vs_len, "float4 out gl_Position : POSITION) {");
+	#else
     append_line(vs_buf, &vs_len, "void main() {");
+	#endif
     for (int i = 0; i < 2; i++) {
         if (cc_features.used_textures[i]) {
             vs_len += sprintf(vs_buf + vs_len, "vTexCoord%d = aTexCoord%d;\n", i, i);
@@ -320,9 +362,40 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     append_line(vs_buf, &vs_len, "gl_Position = aVtxPos;");
     append_line(vs_buf, &vs_len, "}");
 
+#ifdef __vita__
+	texcoord_id = 0;
+
+    append_line(fs_buf, &fs_len, "float random(float3 value) {");
+    append_line(fs_buf, &fs_len, "    float res = dot(sin(value), float3(12.9898, 78.233, 37.719));");
+    append_line(fs_buf, &fs_len, "    return frac(sin(res) * 143758.5453);");
+    append_line(fs_buf, &fs_len, "}");
+
+    //if (current_filter_mode == FILTER_THREE_POINT) {
+    //    append_line(fs_buf, &fs_len, "#define TEX_OFFSET(off) tex2D(tex_sampler, texCoord - (off)/texSize)");
+    //    append_line(fs_buf, &fs_len, "float4 filter3point(sampler2D tex_sampler, float2 texCoord, float2 texSize) {");
+    //    append_line(fs_buf, &fs_len, "    float2 offset = frac(texCoord*texSize - float2(0.5));");
+    //    append_line(fs_buf, &fs_len, "    offset -= step(1.0, offset.x + offset.y);");
+    //    append_line(fs_buf, &fs_len, "    float4 c0 = TEX_OFFSET(offset);");
+    //    append_line(fs_buf, &fs_len, "    float4 c1 = TEX_OFFSET(float2(offset.x - sign(offset.x), offset.y));");
+    //    append_line(fs_buf, &fs_len, "    float4 c2 = TEX_OFFSET(float2(offset.x, offset.y - sign(offset.y)));");
+    //    append_line(fs_buf, &fs_len, "    return c0 + abs(offset.x)*(c1-c0) + abs(offset.y)*(c2-c0);");
+    //    append_line(fs_buf, &fs_len, "}");
+    //    append_line(fs_buf, &fs_len, "float4 hookTexture2D(sampler2D tex_sampler, float2 uv, float2 texSize) {");
+    //    append_line(fs_buf, &fs_len, "    return filter3point(tex_sampler, uv, texSize);");
+    //    append_line(fs_buf, &fs_len, "}");
+    //} else
+	{
+        append_line(fs_buf, &fs_len, "float4 hookTexture2D(sampler2D tex, float2 uv, float2 texSize) {");
+        append_line(fs_buf, &fs_len, "    return tex2D(tex, uv);");
+        append_line(fs_buf, &fs_len, "}");
+    }
+#endif
+
     // Fragment shader
 #ifdef __APPLE__
     append_line(fs_buf, &fs_len, "#version 410 core");
+#elif defined(__vita__)
+    append_line(fs_buf, &fs_len, "float4 main(");
 #else
     append_line(fs_buf, &fs_len, "#version 130");
 #endif
@@ -331,6 +404,9 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
         if (cc_features.used_textures[i]) {
         #ifdef __APPLE__
             fs_len += sprintf(fs_buf + fs_len, "in vec2 vTexCoord%d;\n", i);
+		#elif defined(__vita__)
+			fs_len += sprintf(fs_buf + fs_len, "uniform float2 texSize%d,\n", i);
+			fs_len += sprintf(fs_buf + fs_len, "float2 vTexCoord%d : TEXCOORD%d,\n", i, texcoord_id++);
         #else
             fs_len += sprintf(fs_buf + fs_len, "varying vec2 vTexCoord%d;\n", i);
         #endif
@@ -338,7 +414,9 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
                 if (cc_features.clamp[i][j]) {
                 #ifdef __APPLE__
                     fs_len += sprintf(fs_buf + fs_len, "in float vTexClamp%s%d;\n", j == 0 ? "S" : "T", i);
-                #else
+                #elif defined(__vita__)
+					fs_len += sprintf(fs_buf + fs_len, "in float vTexClamp%s%d : TEXCOORD%d,\n", j == 0 ? "S" : "T", i, texcoord_id++);
+				#else
                     fs_len += sprintf(fs_buf + fs_len, "varying float vTexClamp%s%d;\n", j == 0 ? "S" : "T", i);
                 #endif
                 }
@@ -348,6 +426,8 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     if (cc_features.opt_fog) {
     #ifdef __APPLE__
         append_line(fs_buf, &fs_len, "in vec4 vFog;");
+	#elif defined(__vita__)
+		fs_len += sprintf(fs_buf + fs_len, "float4 vFog : TEXCOORD%d,", texcoord_id++);
     #else
         append_line(fs_buf, &fs_len, "varying vec4 vFog;");
     #endif
@@ -355,6 +435,8 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     if (cc_features.opt_grayscale) {
     #ifdef __APPLE__
         append_line(fs_buf, &fs_len, "in vec4 vGrayscaleColor;");
+	#elif defined(__vita__)
+        append_line(fs_buf, &fs_len, "float4 vGrayscaleColor : COLOR,");
     #else
         append_line(fs_buf, &fs_len, "varying vec4 vGrayscaleColor;");
     #endif
@@ -362,10 +444,23 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     for (int i = 0; i < cc_features.num_inputs; i++) {
     #ifdef __APPLE__
         fs_len += sprintf(fs_buf + fs_len, "in vec%d vInput%d;\n", cc_features.opt_alpha ? 4 : 3, i + 1);
+	#elif defined(__vita__)
+        fs_len += sprintf(fs_buf + fs_len, "float%d vInput%d : TEXCOORD%d,\n", cc_features.opt_alpha ? 4 : 3, i + 1, texcoord_id++);
     #else
         fs_len += sprintf(fs_buf + fs_len, "varying vec%d vInput%d;\n", cc_features.opt_alpha ? 4 : 3, i + 1);
     #endif
     }
+	#ifdef __vita__
+	if (cc_features.used_textures[0]) {
+        append_line(fs_buf, &fs_len, "uniform sampler2D uTex0,");
+    }
+    if (cc_features.used_textures[1]) {
+        append_line(fs_buf, &fs_len, "uniform sampler2D uTex1,");
+    }
+
+    append_line(fs_buf, &fs_len, "uniform int frame_count,");
+    append_line(fs_buf, &fs_len, "uniform float noise_scale,");
+	#else
     if (cc_features.used_textures[0]) {
         append_line(fs_buf, &fs_len, "uniform sampler2D uTex0;");
     }
@@ -375,7 +470,8 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
 
     append_line(fs_buf, &fs_len, "uniform int frame_count;");
     append_line(fs_buf, &fs_len, "uniform float noise_scale;");
-
+	#endif
+	#ifndef __vita__
     append_line(fs_buf, &fs_len, "float random(in vec3 value) {");
     append_line(fs_buf, &fs_len, "    float random = dot(sin(value), vec3(12.9898, 78.233, 37.719));");
     append_line(fs_buf, &fs_len, "    return fract(sin(random) * 143758.5453);");
@@ -407,21 +503,37 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     #endif
         append_line(fs_buf, &fs_len, "}");
     }
-
+	#endif
 #if __APPLE__
     append_line(fs_buf, &fs_len, "out vec4 outColor;");
 #endif
 
+#ifdef __vita__
+	append_line(fs_buf, &fs_len, "float4 gl_FragCoord : WPOS) {");
+#else
     append_line(fs_buf, &fs_len, "void main() {");
-
+#endif
     // Reference approach to color wrapping as per GLideN64
     // Return wrapped value of x in interval [low, high)
+#ifdef __vita__
+	append_line(fs_buf, &fs_len, "#define WRAP(x, low, high) fmod((x)-(low), (high)-(low)) + (low)");
+#else
     append_line(fs_buf, &fs_len, "#define WRAP(x, low, high) mod((x)-(low), (high)-(low)) + (low)");
-
+#endif
     for (int i = 0; i < 2; i++) {
         if (cc_features.used_textures[i]) {
             bool s = cc_features.clamp[i][0], t = cc_features.clamp[i][1];
-
+#ifdef __vita__
+            if (!s && !t) {
+                fs_len += sprintf(fs_buf + fs_len, "float4 texVal%d = hookTexture2D(uTex%d, vTexCoord%d, texSize%d);\n", i, i, i, i);
+            } else {
+                if (s && t) {
+                    fs_len += sprintf(fs_buf + fs_len, "float4 texVal%d = hookTexture2D(uTex%d, clamp(vTexCoord%d, 0.5 / texSize%d, float2(vTexClampS%d, vTexClampT%d)), texSize%d);\n", i, i, i, i, i, i, i);
+                } else if (s) {
+                    fs_len += sprintf(fs_buf + fs_len, "float4 texVal%d = hookTexture2D(uTex%d, float2(clamp(vTexCoord%d.s, 0.5 / texSize%d.s, vTexClampS%d), vTexCoord%d.t), texSize%d);\n", i, i, i, i, i, i, i);
+                } else {
+                    fs_len += sprintf(fs_buf + fs_len, "float4 texVal%d = hookTexture2D(uTex%d, float2(vTexCoord%d.s, clamp(vTexCoord%d.t, 0.5 / texSize%d.t, vTexClampT%d)), texSize%d);\n", i, i, i, i, i, i, i);
+#else
             fs_len += sprintf(fs_buf + fs_len, "vec2 texSize%d = textureSize(uTex%d, 0);\n", i, i);
 
             if (!s && !t) {
@@ -433,16 +545,25 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
                     fs_len += sprintf(fs_buf + fs_len, "vec4 texVal%d = hookTexture2D(uTex%d, vec2(clamp(vTexCoord%d.s, 0.5 / texSize%d.s, vTexClampS%d), vTexCoord%d.t), texSize%d);\n", i, i, i, i, i, i, i);
                 } else {
                     fs_len += sprintf(fs_buf + fs_len, "vec4 texVal%d = hookTexture2D(uTex%d, vec2(vTexCoord%d.s, clamp(vTexCoord%d.t, 0.5 / texSize%d.t, vTexClampT%d)), texSize%d);\n", i, i, i, i, i, i, i);
+#endif
                 }
             }
         }
     }
 
+#ifdef __vita__
+    append_line(fs_buf, &fs_len, cc_features.opt_alpha ? "float4 texel;" : "float3 texel;");
+    for (int c = 0; c < (cc_features.opt_2cyc ? 2 : 1); c++) {
+        append_str(fs_buf, &fs_len, "texel = ");
+        if (!cc_features.color_alpha_same[c] && cc_features.opt_alpha) {
+            append_str(fs_buf, &fs_len, "float4(");
+#else
     append_line(fs_buf, &fs_len, cc_features.opt_alpha ? "vec4 texel;" : "vec3 texel;");
     for (int c = 0; c < (cc_features.opt_2cyc ? 2 : 1); c++) {
         append_str(fs_buf, &fs_len, "texel = ");
         if (!cc_features.color_alpha_same[c] && cc_features.opt_alpha) {
             append_str(fs_buf, &fs_len, "vec4(");
+#endif
             append_formula(fs_buf, &fs_len, cc_features.c[c], cc_features.do_single[c][0], cc_features.do_multiply[c][0], cc_features.do_mix[c][0], false, false, true);
             append_str(fs_buf, &fs_len, ", ");
             append_formula(fs_buf, &fs_len, cc_features.c[c], cc_features.do_single[c][1], cc_features.do_multiply[c][1], cc_features.do_mix[c][1], true, true, true);
@@ -455,9 +576,53 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
 
         if (c == 0) {
             append_str(fs_buf, &fs_len, "texel = WRAP(texel, -1.01, 1.01);");
+
         }
     }
 
+#ifdef __vita__
+    append_str(fs_buf, &fs_len, "texel = WRAP(texel, -0.51, 1.51);");
+    append_str(fs_buf, &fs_len, "texel = clamp(texel, 0.0, 1.0);");
+    // TODO discard if alpha is 0?
+    if (cc_features.opt_fog)
+    {
+        if (cc_features.opt_alpha)
+        {
+            append_line(fs_buf, &fs_len, "texel = float4(lerp(texel.rgb, vFog.rgb, vFog.a), texel.a);");
+        }
+        else
+        {
+            append_line(fs_buf, &fs_len, "texel = lerp(texel, vFog.rgb, vFog.a);");
+        }
+    }
+
+    if (cc_features.opt_texture_edge && cc_features.opt_alpha) {
+        append_line(fs_buf, &fs_len, "if (texel.a > 0.19) texel.a = 1.0; else discard;");
+    }
+
+    if (cc_features.opt_alpha && cc_features.opt_noise) {
+        append_line(fs_buf, &fs_len, "texel.a *= floor(clamp(random(float3(floor(gl_FragCoord.xy * noise_scale), float(frame_count))) + texel.a, 0.0, 1.0));");
+    }
+
+    if (cc_features.opt_grayscale) {
+        append_line(fs_buf, &fs_len, "float intensity = (texel.r + texel.g + texel.b) / 3.0;");
+        append_line(fs_buf, &fs_len, "float3 new_texel = vGrayscaleColor.rgb * intensity;");
+        append_line(fs_buf, &fs_len, "texel.rgb = lerp(texel.rgb, new_texel, vGrayscaleColor.a);");
+    }
+
+    if (cc_features.opt_alpha) {
+        if (cc_features.opt_alpha_threshold) {
+            append_line(fs_buf, &fs_len, "if (texel.a < 8.0 / 256.0) discard;");
+        }
+        if (cc_features.opt_invisible) {
+            append_line(fs_buf, &fs_len, "texel.a = 0.0;");
+        }
+        append_line(fs_buf, &fs_len, "return texel;");
+    } else {
+        append_line(fs_buf, &fs_len, "return float4(texel, 1.0);");
+    }
+    append_line(fs_buf, &fs_len, "}");
+#else
     append_str(fs_buf, &fs_len, "texel = WRAP(texel, -0.51, 1.51);");
     append_str(fs_buf, &fs_len, "texel = clamp(texel, 0.0, 1.0);");
     // TODO discard if alpha is 0?
@@ -507,7 +672,7 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     #endif
     }
     append_line(fs_buf, &fs_len, "}");
-
+#endif
     vs_buf[vs_len] = '\0';
     fs_buf[fs_len] = '\0';
 
@@ -522,7 +687,12 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     GLint success;
 
     GLuint vertex_shader = glCreateShader(GL_VERTEX_SHADER);
+#ifdef __vita__
+    glShaderSource(vertex_shader, 1, &sources[0], NULL);
+#else
     glShaderSource(vertex_shader, 1, &sources[0], &lengths[0]);
+#endif
+	printf("VERTEX SHADER:\n%s\n", vs_buf);
     glCompileShader(vertex_shader);
     glGetShaderiv(vertex_shader, GL_COMPILE_STATUS, &success);
     if (!success) {
@@ -536,7 +706,12 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     }
 
     GLuint fragment_shader = glCreateShader(GL_FRAGMENT_SHADER);
+#ifdef __vita__
+    glShaderSource(fragment_shader, 1, &sources[1], NULL);
+#else
     glShaderSource(fragment_shader, 1, &sources[1], &lengths[1]);
+#endif
+	printf("FRAGMENT SHADER:\n%s\n", fs_buf);
     glCompileShader(fragment_shader);
     glGetShaderiv(fragment_shader, GL_COMPILE_STATUS, &success);
     if (!success) {
@@ -612,10 +787,16 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     if (cc_features.used_textures[0]) {
         GLint sampler_location = glGetUniformLocation(shader_program, "uTex0");
         glUniform1i(sampler_location, 0);
+#ifdef __vita__
+        prg->uTexSize[0] = glGetUniformLocation(shader_program, "texSize0");
+#endif
     }
     if (cc_features.used_textures[1]) {
         GLint sampler_location = glGetUniformLocation(shader_program, "uTex1");
         glUniform1i(sampler_location, 1);
+#ifdef __vita__
+        prg->uTexSize[1] = glGetUniformLocation(shader_program, "texSize1");
+#endif
     }
 
     prg->frame_count_location = glGetUniformLocation(shader_program, "frame_count");
@@ -648,13 +829,23 @@ static void gfx_opengl_delete_texture(uint32_t texID) {
 static void gfx_opengl_select_texture(int tile, GLuint texture_id) {
     glActiveTexture(GL_TEXTURE0 + tile);
     glBindTexture(GL_TEXTURE_2D, texture_id);
+#ifdef __vita__
+	SceGxmTexture *gxm_tex = vglGetGxmTexture(GL_TEXTURE_2D);
+	tex_size[tile][0] = sceGxmTextureGetWidth(gxm_tex);
+	tex_size[tile][1] = sceGxmTextureGetHeight(gxm_tex);
+#endif
 }
+
+#ifdef __vita__
+#define GL_RGBA8 GL_RGBA
+#define GL_RGB8 GL_RGB
+#endif
 
 static void gfx_opengl_upload_texture(const uint8_t *rgba32_buf, uint32_t width, uint32_t height) {
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba32_buf);
 }
 
-#ifdef __SWITCH__
+#if defined(__SWITCH__) || defined(__vita__)
 #define GL_MIRROR_CLAMP_TO_EDGE 0x8743
 #endif
 
@@ -720,12 +911,20 @@ static void gfx_opengl_set_use_alpha(bool use_alpha) {
 
 static void gfx_opengl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
     //printf("flushing %d tris\n", buf_vbo_num_tris);
+#ifdef __vita__
+	if (cur_gl_program->used_textures[0]) {
+		glUniform2fv(cur_gl_program->uTexSize[0], 1, tex_size[0]);
+	}
+	if (cur_gl_program->used_textures[1]) {
+		glUniform2fv(cur_gl_program->uTexSize[1], 1, tex_size[1]);
+	}
+#endif
     glBufferData(GL_ARRAY_BUFFER, sizeof(float) * buf_vbo_len, buf_vbo, GL_STREAM_DRAW);
     glDrawArrays(GL_TRIANGLES, 0, 3 * buf_vbo_num_tris);
 }
 
 static void gfx_opengl_init(void) {
-#ifndef __SWITCH__
+#if !defined(__SWITCH__) && !defined(__vita__)
     glewInit();
 #endif
 
@@ -736,8 +935,9 @@ static void gfx_opengl_init(void) {
     glGenVertexArrays(1, &opengl_vao);
     glBindVertexArray(opengl_vao);
 #endif
-
+#ifndef __vita__
     glEnable(GL_DEPTH_CLAMP);
+#endif
     glDepthFunc(GL_LEQUAL);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
@@ -817,21 +1017,27 @@ static void gfx_opengl_update_framebuffer_parameters(int fb_id, uint32_t width, 
                 glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
                 glBindTexture(GL_TEXTURE_2D, 0);
                 glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, fb.clrbuf, 0);
-            } else {
+			} 
+#ifndef __vita__
+			else {
                 glBindRenderbuffer(GL_RENDERBUFFER, fb.clrbuf_msaa);
                 glRenderbufferStorageMultisample(GL_RENDERBUFFER, msaa_level, GL_RGB8, width, height);
                 glBindRenderbuffer(GL_RENDERBUFFER, 0);
                 glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, fb.clrbuf_msaa);
             }
+#endif
         }
 
         if (has_depth_buffer && (fb.width != width || fb.height != height || fb.msaa_level != msaa_level || !fb.has_depth_buffer)) {
             glBindRenderbuffer(GL_RENDERBUFFER, fb.rbo);
             if (msaa_level <= 1) {
                 glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
-            } else {
+            }
+#ifndef __vita__
+			else {
                 glRenderbufferStorageMultisample(GL_RENDERBUFFER, msaa_level, GL_DEPTH24_STENCIL8, width, height);
             }
+#endif
             glBindRenderbuffer(GL_RENDERBUFFER, 0);
         }
 
@@ -869,12 +1075,14 @@ void gfx_opengl_clear_framebuffer() {
 }
 
 void gfx_opengl_resolve_msaa_color_buffer(int fb_id_target, int fb_id_source) {
+#ifndef __vita__
     Framebuffer& fb_dst = framebuffers[fb_id_target];
     Framebuffer& fb_src = framebuffers[fb_id_source];
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fb_dst.fbo);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, fb_src.fbo);
     glBlitFramebuffer(0, 0, fb_src.width, fb_src.height, 0, 0, fb_dst.width, fb_dst.height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
     glBindFramebuffer(GL_FRAMEBUFFER, current_framebuffer);
+#endif
 }
 
 void *gfx_opengl_get_framebuffer_texture_id(int fb_id) {
@@ -917,7 +1125,7 @@ static std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff> gfx_o
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, pixel_depth_fb);
 
         glDisable(GL_SCISSOR_TEST); // needed for the blit operation
-
+#ifndef __vita__
         {
             size_t i = 0;
             for (const auto& coord : coordinates) {
@@ -930,7 +1138,9 @@ static std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff> gfx_o
                 ++i;
             }
         }
-
+#else
+		printf("vita: Warning!\n");
+#endif
         glBindFramebuffer(GL_READ_FRAMEBUFFER, pixel_depth_fb);
         vector<uint32_t> depth_stencil_values(coordinates.size());
         glReadPixels(0, 0, coordinates.size(), 1, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, depth_stencil_values.data());

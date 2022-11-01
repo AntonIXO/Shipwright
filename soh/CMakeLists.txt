@@ -2047,9 +2047,13 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "PSVita")
         SDL2::SDL2
         vitaGL
         vitashark
+        mathneon
         SceShaccCgExt
         taihen_stub
         SceShaccCg_stub
+        SceAudioIn_stub
+        SceKernelDmacMgr_stub
+        SceIme_stub
         Threads::Threads
     )
 else()

@@ -411,7 +411,7 @@ namespace Ship {
 #ifdef _WIN32
             std::wstring wfullPath = std::filesystem::absolute(OTRFiles[i]).wstring();
 #endif
-#if defined(__SWITCH__)
+#if defined(__SWITCH__) || defined(__vita__)
             std::string fullPath = OTRFiles[0];
 #else  
             std::string fullPath = std::filesystem::absolute(OTRFiles[i]).string();
@@ -450,7 +450,7 @@ namespace Ship {
 #ifdef _WIN32
             std::wstring wfullPath = std::filesystem::absolute(OTRFiles[j]).wstring();
 #endif
-#if defined(__SWITCH__)
+#if defined(__SWITCH__) || defined(__vita__)
             std::string fullPath = OTRFiles[i];
 #else
             std::string fullPath = std::filesystem::absolute(OTRFiles[j]).string();
@@ -470,7 +470,7 @@ namespace Ship {
 
 	bool Archive::LoadPatchMPQ(const std::string& path, bool validateVersion) {
 		HANDLE patchHandle = NULL;
-#if defined(__SWITCH__)
+#if defined(__SWITCH__) || defined(__vita__)
 		std::string fullPath = path;
 #else
 		std::string fullPath = std::filesystem::absolute(path).string();

@@ -327,6 +327,10 @@ namespace Ship {
             return std::string(fpath);
 #endif
 
+#ifdef __vita__
+		return std::string("ux0:data/soh");
+#endif
+
         return ".";
     }
 
