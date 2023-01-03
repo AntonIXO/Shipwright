@@ -42,7 +42,12 @@ void Main_LogSystemHeap(void) {
 #ifdef _WIN32
 int APIENTRY WinMain(HINSTANCE hInst, HINSTANCE hInstPrev, PSTR cmdline, int cmdshow) 
 #else
+#ifdef __vita__
+#include <vitasdk.h>
+void *soh_main (void* argv)
+#else
 int main(int argc, char** argv)
+#endif
 #endif
 {
     CrashHandler_Init(CrashHandler_PrintSohData);
@@ -55,6 +60,20 @@ int main(int argc, char** argv)
     DeinitOTR();
     return 0;
 }
+
+#ifdef __vita__
+int main(int argc, char **argv)
+{
+	// We need a bigger stack to run SoH, so we create a new thread with a proper stack size
+	pthread_t t;
+	pthread_attr_t attr;
+	pthread_attr_init(&attr);
+	pthread_attr_setstacksize(&attr, 12 * 1024 * 1024);
+	pthread_create(&t, &attr, soh_main, NULL);
+	pthread_join(t, NULL);
+	return 0;
+}
+#endif
 
 void Main(void* arg) {
     IrqMgrClient irqClient;

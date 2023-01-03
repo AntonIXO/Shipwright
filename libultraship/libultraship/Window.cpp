@@ -57,7 +57,7 @@ extern "C" {
             exit(EXIT_FAILURE);
         }
 
-    #ifndef __SWITCH__
+    #if !defined(__SWITCH__) && !defined(__vita__)
         const char* controllerDb = "gamecontrollerdb.txt";
         int mappingsAdded = SDL_GameControllerAddMappingsFromFile(controllerDb);
         if (mappingsAdded >= 0) {
@@ -259,8 +259,13 @@ namespace Ship {
 
     void Window::CreateDefaults() {
         if (GetConfig()->isNewInstance) {
+#ifdef __vita__
+            GetConfig()->setInt("Window.Width", 960);
+            GetConfig()->setInt("Window.Height", 544);
+#else
             GetConfig()->setInt("Window.Width", 640);
             GetConfig()->setInt("Window.Height", 480);
+#endif
             GetConfig()->setBool("Window.Options", false);
             GetConfig()->setString("Window.GfxBackend", "");
             GetConfig()->setString("Window.AudioBackend", "");
@@ -287,7 +292,10 @@ namespace Ship {
         InitializeControlDeck();
 
         bIsFullscreen = GetConfig()->getBool("Window.Fullscreen.Enabled", false);
-
+#ifdef __vita__
+        dwWidth = GetConfig()->getInt("Window.Width", 960);
+        dwHeight = GetConfig()->getInt("Window.Height", 544);
+#else
         if (bIsFullscreen) {
             dwWidth = GetConfig()->getInt("Window.Fullscreen.Width", 1920);
             dwHeight = GetConfig()->getInt("Window.Fullscreen.Height", 1080);
@@ -295,7 +303,7 @@ namespace Ship {
             dwWidth = GetConfig()->getInt("Window.Width", 640);
             dwHeight = GetConfig()->getInt("Window.Height", 480);
         }
-
+#endif
         dwMenubar = GetConfig()->getBool("Window.Options", false);
 
         gfxBackend = GetConfig()->getString("Window.GfxBackend");
@@ -328,7 +336,7 @@ namespace Ship {
 #endif
 
 #ifdef __vita__
-		return std::string("ux0:data/soh");
+        return std::string("ux0:data/soh");
 #endif
 
         return ".";

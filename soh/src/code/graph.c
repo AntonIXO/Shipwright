@@ -455,7 +455,7 @@ static void RunFrame()
         size = runFrameContext.ovl->instanceSize;
         osSyncPrintf("クラスサイズ＝%dバイト\n", size); // "Class size = %d bytes"
 
-        runFrameContext.gameState = SYSTEM_ARENA_MALLOC_DEBUG(size);
+        runFrameContext.gameState = SYSTEM_ARENA_MALLOC_DEBUG(sizeof(GlobalContext));
 
         if (!runFrameContext.gameState)
         {

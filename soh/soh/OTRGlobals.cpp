@@ -17,6 +17,9 @@
 #include "Enhancements/gameconsole.h"
 #include <ultra64/gbi.h>
 #include <libultraship/Animation.h>
+#ifdef __vita__
+#include <vitasdk.h>
+#endif
 #ifdef _WIN32
 #include <Windows.h>
 #else
@@ -477,6 +480,9 @@ extern "C" uint64_t GetFrequency() {
 }
 
 extern "C" uint64_t GetPerfCounter() {
+#ifdef __vita__
+	return sceKernelGetProcessTimeWide() * 1000;
+#else
     struct timespec monotime;
     clock_gettime(CLOCK_MONOTONIC, &monotime);
 
@@ -484,6 +490,7 @@ extern "C" uint64_t GetPerfCounter() {
 
     // in milliseconds
     return monotime.tv_sec * 1000 + remainingMs;
+#endif
 }
 #endif
 
@@ -837,6 +844,11 @@ extern "C" void ResourceMgr_PatchGfxByName(const char* path, const char* patchNa
             }
         }
     }*/
+	
+	// Index refers to individual gfx words, which are half the size on 32-bit
+    if (sizeof(uintptr_t) < 8) {
+        index /= 2;
+    }
 
     Gfx* gfx = (Gfx*)&res->instructions[index];
 
@@ -1103,8 +1115,8 @@ extern "C" SoundFontSample* ResourceMgr_LoadAudioSample(const char* path)
         sampleC->unk_bit26 = sample->unk_bit26;
         sampleC->unk_bit25 = sample->unk_bit25;
 
-        sampleC->book = new AdpcmBook[sample->book.books.size() * sizeof(int16_t)];
-        sampleC->book->npredictors = sample->book.npredictors;
+        sampleC->book = (AdpcmBook*)malloc(sizeof(AdpcmBook) + sample->book.books.size() * sizeof(int16_t));
+		sampleC->book->npredictors = sample->book.npredictors;
         sampleC->book->order = sample->book.order;
 
         for (size_t i = 0; i < sample->book.books.size(); i++)

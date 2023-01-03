@@ -107,7 +107,10 @@ namespace Ship {
 
 			SPDLOG_TRACE("Loaded File {} on ResourceMgr thread", ToLoad->path);
 
-			ToLoad->FileLoadNotifier.notify_all();
+			if(ToLoad->FileLoadNotifier != nullptr)
+			{
+				ToLoad->FileLoadNotifier->notify_all();
+			}
 		}
 
 		SPDLOG_INFO("Resource Manager LoadFileThread ended");
@@ -131,11 +134,18 @@ namespace Ship {
 			ResourceLoadQueue.pop();
 
 			// Wait for the underlying File to complete loading
+			if(ToLoad->file->FileLoadMutex != nullptr)
 			{
-				std::unique_lock<std::mutex> FileLock(ToLoad->file->FileLoadMutex);
-				while (!ToLoad->file->bIsLoaded && !ToLoad->file->bHasLoadError) {
-					ToLoad->file->FileLoadNotifier.wait(FileLock);
+				{
+					std::unique_lock<std::mutex> fileLock(*ToLoad->file->FileLoadMutex);
+					while (!ToLoad->file->bIsLoaded && !ToLoad->file->bHasLoadError) {
+						if(ToLoad->file->FileLoadNotifier != nullptr)
+						{
+							ToLoad->file->FileLoadNotifier->wait(fileLock);
+						}
+					}
 				}
+				ToLoad->file->releaseSyncObjects();
 			}
 
 			if (!ToLoad->file->bHasLoadError) {
@@ -210,9 +220,12 @@ namespace Ship {
 	std::shared_ptr<File> ResourceMgr::LoadFile(const std::string& FilePath) {
 		auto ToLoad = LoadFileAsync(FilePath);
 		// Wait for the File to actually be loaded if we are told to block.
-		std::unique_lock<std::mutex> Lock(ToLoad->FileLoadMutex);
-		while (!ToLoad->bIsLoaded && !ToLoad->bHasLoadError) {
-			ToLoad->FileLoadNotifier.wait(Lock);
+		if(ToLoad->FileLoadMutex != nullptr)
+		{
+			std::unique_lock<std::mutex> lock(*ToLoad->FileLoadMutex);
+			while (!ToLoad->bIsLoaded && !ToLoad->bHasLoadError) {
+				ToLoad->FileLoadNotifier->wait(lock);
+			}
 		}
 
 		return ToLoad;

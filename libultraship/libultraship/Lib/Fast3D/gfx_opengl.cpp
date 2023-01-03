@@ -64,7 +64,7 @@ struct ShaderProgram {
     GLint frame_count_location;
     GLint noise_scale_location;
 #ifdef __vita__
-	GLint uTexSize[2];
+    GLint uTexSize[2];
 #endif
 };
 
@@ -152,10 +152,17 @@ static void append_line(char *buf, size_t *len, const char *str) {
 static const char *shader_item_to_str(uint32_t item, bool with_alpha, bool only_alpha, bool inputs_have_alpha, bool hint_single_element) {
     if (!only_alpha) {
         switch (item) {
+#ifdef __vita__
+            case SHADER_0:
+                return with_alpha ? "float4(0.0, 0.0, 0.0, 0.0)" : "float3(0.0, 0.0, 0.0)";
+            case SHADER_1:
+                return with_alpha ? "float4(1.0, 1.0, 1.0, 1.0)" : "float3(1.0, 1.0, 1.0)";
+#else
             case SHADER_0:
                 return with_alpha ? "vec4(0.0, 0.0, 0.0, 0.0)" : "vec3(0.0, 0.0, 0.0)";
             case SHADER_1:
                 return with_alpha ? "vec4(1.0, 1.0, 1.0, 1.0)" : "vec3(1.0, 1.0, 1.0)";
+#endif
             case SHADER_INPUT_1:
                 return with_alpha || !inputs_have_alpha ? "vInput1" : "vInput1.rgb";
             case SHADER_INPUT_2:
@@ -166,18 +173,31 @@ static const char *shader_item_to_str(uint32_t item, bool with_alpha, bool only_
                 return with_alpha || !inputs_have_alpha ? "vInput4" : "vInput4.rgb";
             case SHADER_TEXEL0:
                 return with_alpha ? "texVal0" : "texVal0.rgb";
+#ifdef __vita__
+            case SHADER_TEXEL0A:
+                return hint_single_element ? "texVal0.a" :
+                    (with_alpha ? "float4(texVal0.a, texVal0.a, texVal0.a, texVal0.a)" : "float3(texVal0.a, texVal0.a, texVal0.a)");
+            case SHADER_TEXEL1A:
+                return hint_single_element ? "texVal1.a" :
+                    (with_alpha ? "float4(texVal1.a, texVal1.a, texVal1.a, texVal1.a)" : "float3(texVal1.a, texVal1.a, texVal1.a)");
+#else
             case SHADER_TEXEL0A:
                 return hint_single_element ? "texVal0.a" :
                     (with_alpha ? "vec4(texVal0.a, texVal0.a, texVal0.a, texVal0.a)" : "vec3(texVal0.a, texVal0.a, texVal0.a)");
             case SHADER_TEXEL1A:
                 return hint_single_element ? "texVal1.a" :
                     (with_alpha ? "vec4(texVal1.a, texVal1.a, texVal1.a, texVal1.a)" : "vec3(texVal1.a, texVal1.a, texVal1.a)");
+#endif
             case SHADER_TEXEL1:
                 return with_alpha ? "texVal1" : "texVal1.rgb";
             case SHADER_COMBINED:
                 return with_alpha ? "texel" : "texel.rgb";
             case SHADER_NOISE:
+#ifdef __vita__
+                return with_alpha ? "float4(" RAND_NOISE ", " RAND_NOISE ", " RAND_NOISE ", " RAND_NOISE ")" : "float3(" RAND_NOISE ", " RAND_NOISE ", " RAND_NOISE ")";
+#else
                 return with_alpha ? "vec4(" RAND_NOISE ", " RAND_NOISE ", " RAND_NOISE ", " RAND_NOISE ")" : "vec3(" RAND_NOISE ", " RAND_NOISE ", " RAND_NOISE ")";
+#endif
         }
     } else {
         switch (item) {
@@ -220,7 +240,11 @@ static void append_formula(char *buf, size_t *len, uint8_t c[2][4], bool do_sing
         append_str(buf, len, " * ");
         append_str(buf, len, shader_item_to_str(c[only_alpha][2], with_alpha, only_alpha, opt_alpha, true));
     } else if (do_mix) {
+#ifdef __vita__
+        append_str(buf, len, "lerp(");
+#else
         append_str(buf, len, "mix(");
+#endif
         append_str(buf, len, shader_item_to_str(c[only_alpha][1], with_alpha, only_alpha, opt_alpha, false));
         append_str(buf, len, ", ");
         append_str(buf, len, shader_item_to_str(c[only_alpha][0], with_alpha, only_alpha, opt_alpha, false));
@@ -250,7 +274,7 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     size_t num_floats = 4;
 
 #ifdef __vita__
-	int texcoord_id = 0;
+    int texcoord_id = 0;
 #endif
 
     // Vertex shader
@@ -282,9 +306,9 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
                 #ifdef __APPLE__
                     vs_len += sprintf(vs_buf + vs_len, "in float aTexClamp%s%d;\n", j == 0 ? "S" : "T", i);
                     vs_len += sprintf(vs_buf + vs_len, "out float vTexClamp%s%d;\n", j == 0 ? "S" : "T", i);
-				#elif defined(__vita__)
+                #elif defined(__vita__)
                     vs_len += sprintf(vs_buf + vs_len, "float aTexClamp%s%d,\n", j == 0 ? "S" : "T", i);
-                    vs_len += sprintf(vs_buf + vs_len, "float out vTexClamp%s%d : TEXCOORD%d,\n", j == 0 ? "S" : "T", i, texcoord_id++);		
+                    vs_len += sprintf(vs_buf + vs_len, "float out vTexClamp%s%d : TEXCOORD%d,\n", j == 0 ? "S" : "T", i, texcoord_id++);
                 #else
                     vs_len += sprintf(vs_buf + vs_len, "attribute float aTexClamp%s%d;\n", j == 0 ? "S" : "T", i);
                     vs_len += sprintf(vs_buf + vs_len, "varying float vTexClamp%s%d;\n", j == 0 ? "S" : "T", i);
@@ -298,7 +322,7 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     #ifdef __APPLE__
         append_line(vs_buf, &vs_len, "in vec4 aFog;");
         append_line(vs_buf, &vs_len, "out vec4 vFog;");
-	#elif defined(__vita__)
+    #elif defined(__vita__)
         append_line(vs_buf, &vs_len, "float4 aFog,");
         vs_len += sprintf(vs_buf + vs_len, "float4 out vFog : TEXCOORD%d,", texcoord_id++);
     #else
@@ -312,7 +336,7 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     #ifdef __APPLE__
         append_line(vs_buf, &vs_len, "in vec4 aGrayscaleColor;");
         append_line(vs_buf, &vs_len, "out vec4 vGrayscaleColor;");
-	#elif defined(__vita__)
+    #elif defined(__vita__)
         append_line(vs_buf, &vs_len, "float4 aGrayscaleColor,");
         append_line(vs_buf, &vs_len, "float4 out vGrayscaleColor : COLOR,");
     #else
@@ -326,20 +350,20 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     #ifdef __APPLE__
         vs_len += sprintf(vs_buf + vs_len, "in vec%d aInput%d;\n", cc_features.opt_alpha ? 4 : 3, i + 1);
         vs_len += sprintf(vs_buf + vs_len, "out vec%d vInput%d;\n", cc_features.opt_alpha ? 4 : 3, i + 1);
-	#elif defined(__vita__)
+    #elif defined(__vita__)
         vs_len += sprintf(vs_buf + vs_len, "float%d aInput%d,\n", cc_features.opt_alpha ? 4 : 3, i + 1);
-        vs_len += sprintf(vs_buf + vs_len, "float%d out vInput%d : TEXCOORD%d,\n", cc_features.opt_alpha ? 4 : 3, i + 1, texcoord_id++);	
+        vs_len += sprintf(vs_buf + vs_len, "float%d out vInput%d : TEXCOORD%d,\n", cc_features.opt_alpha ? 4 : 3, i + 1, texcoord_id++);
     #else
         vs_len += sprintf(vs_buf + vs_len, "attribute vec%d aInput%d;\n", cc_features.opt_alpha ? 4 : 3, i + 1);
         vs_len += sprintf(vs_buf + vs_len, "varying vec%d vInput%d;\n", cc_features.opt_alpha ? 4 : 3, i + 1);
     #endif
         num_floats += cc_features.opt_alpha ? 4 : 3;
     }
-	#ifdef __vita__
-	append_line(vs_buf, &vs_len, "float4 out gl_Position : POSITION) {");
-	#else
+    #ifdef __vita__
+    append_line(vs_buf, &vs_len, "float4 out gl_Position : POSITION) {");
+    #else
     append_line(vs_buf, &vs_len, "void main() {");
-	#endif
+    #endif
     for (int i = 0; i < 2; i++) {
         if (cc_features.used_textures[i]) {
             vs_len += sprintf(vs_buf + vs_len, "vTexCoord%d = aTexCoord%d;\n", i, i);
@@ -363,7 +387,7 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     append_line(vs_buf, &vs_len, "}");
 
 #ifdef __vita__
-	texcoord_id = 0;
+    texcoord_id = 0;
 
     append_line(fs_buf, &fs_len, "float random(float3 value) {");
     append_line(fs_buf, &fs_len, "    float res = dot(sin(value), float3(12.9898, 78.233, 37.719));");
@@ -384,7 +408,7 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     //    append_line(fs_buf, &fs_len, "    return filter3point(tex_sampler, uv, texSize);");
     //    append_line(fs_buf, &fs_len, "}");
     //} else
-	{
+    {
         append_line(fs_buf, &fs_len, "float4 hookTexture2D(sampler2D tex, float2 uv, float2 texSize) {");
         append_line(fs_buf, &fs_len, "    return tex2D(tex, uv);");
         append_line(fs_buf, &fs_len, "}");
@@ -404,9 +428,9 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
         if (cc_features.used_textures[i]) {
         #ifdef __APPLE__
             fs_len += sprintf(fs_buf + fs_len, "in vec2 vTexCoord%d;\n", i);
-		#elif defined(__vita__)
-			fs_len += sprintf(fs_buf + fs_len, "uniform float2 texSize%d,\n", i);
-			fs_len += sprintf(fs_buf + fs_len, "float2 vTexCoord%d : TEXCOORD%d,\n", i, texcoord_id++);
+        #elif defined(__vita__)
+            fs_len += sprintf(fs_buf + fs_len, "uniform float2 texSize%d,\n", i);
+            fs_len += sprintf(fs_buf + fs_len, "float2 vTexCoord%d : TEXCOORD%d,\n", i, texcoord_id++);
         #else
             fs_len += sprintf(fs_buf + fs_len, "varying vec2 vTexCoord%d;\n", i);
         #endif
@@ -415,8 +439,8 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
                 #ifdef __APPLE__
                     fs_len += sprintf(fs_buf + fs_len, "in float vTexClamp%s%d;\n", j == 0 ? "S" : "T", i);
                 #elif defined(__vita__)
-					fs_len += sprintf(fs_buf + fs_len, "in float vTexClamp%s%d : TEXCOORD%d,\n", j == 0 ? "S" : "T", i, texcoord_id++);
-				#else
+                    fs_len += sprintf(fs_buf + fs_len, "in float vTexClamp%s%d : TEXCOORD%d,\n", j == 0 ? "S" : "T", i, texcoord_id++);
+                #else
                     fs_len += sprintf(fs_buf + fs_len, "varying float vTexClamp%s%d;\n", j == 0 ? "S" : "T", i);
                 #endif
                 }
@@ -426,8 +450,8 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     if (cc_features.opt_fog) {
     #ifdef __APPLE__
         append_line(fs_buf, &fs_len, "in vec4 vFog;");
-	#elif defined(__vita__)
-		fs_len += sprintf(fs_buf + fs_len, "float4 vFog : TEXCOORD%d,", texcoord_id++);
+    #elif defined(__vita__)
+        fs_len += sprintf(fs_buf + fs_len, "float4 vFog : TEXCOORD%d,", texcoord_id++);
     #else
         append_line(fs_buf, &fs_len, "varying vec4 vFog;");
     #endif
@@ -435,7 +459,7 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     if (cc_features.opt_grayscale) {
     #ifdef __APPLE__
         append_line(fs_buf, &fs_len, "in vec4 vGrayscaleColor;");
-	#elif defined(__vita__)
+    #elif defined(__vita__)
         append_line(fs_buf, &fs_len, "float4 vGrayscaleColor : COLOR,");
     #else
         append_line(fs_buf, &fs_len, "varying vec4 vGrayscaleColor;");
@@ -444,14 +468,14 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     for (int i = 0; i < cc_features.num_inputs; i++) {
     #ifdef __APPLE__
         fs_len += sprintf(fs_buf + fs_len, "in vec%d vInput%d;\n", cc_features.opt_alpha ? 4 : 3, i + 1);
-	#elif defined(__vita__)
+    #elif defined(__vita__)
         fs_len += sprintf(fs_buf + fs_len, "float%d vInput%d : TEXCOORD%d,\n", cc_features.opt_alpha ? 4 : 3, i + 1, texcoord_id++);
     #else
         fs_len += sprintf(fs_buf + fs_len, "varying vec%d vInput%d;\n", cc_features.opt_alpha ? 4 : 3, i + 1);
     #endif
     }
-	#ifdef __vita__
-	if (cc_features.used_textures[0]) {
+    #ifdef __vita__
+    if (cc_features.used_textures[0]) {
         append_line(fs_buf, &fs_len, "uniform sampler2D uTex0,");
     }
     if (cc_features.used_textures[1]) {
@@ -460,7 +484,7 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
 
     append_line(fs_buf, &fs_len, "uniform int frame_count,");
     append_line(fs_buf, &fs_len, "uniform float noise_scale,");
-	#else
+    #else
     if (cc_features.used_textures[0]) {
         append_line(fs_buf, &fs_len, "uniform sampler2D uTex0;");
     }
@@ -470,8 +494,8 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
 
     append_line(fs_buf, &fs_len, "uniform int frame_count;");
     append_line(fs_buf, &fs_len, "uniform float noise_scale;");
-	#endif
-	#ifndef __vita__
+    #endif
+    #ifndef __vita__
     append_line(fs_buf, &fs_len, "float random(in vec3 value) {");
     append_line(fs_buf, &fs_len, "    float random = dot(sin(value), vec3(12.9898, 78.233, 37.719));");
     append_line(fs_buf, &fs_len, "    return fract(sin(random) * 143758.5453);");
@@ -503,20 +527,20 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     #endif
         append_line(fs_buf, &fs_len, "}");
     }
-	#endif
+    #endif
 #if __APPLE__
     append_line(fs_buf, &fs_len, "out vec4 outColor;");
 #endif
 
 #ifdef __vita__
-	append_line(fs_buf, &fs_len, "float4 gl_FragCoord : WPOS) {");
+    append_line(fs_buf, &fs_len, "float4 gl_FragCoord : WPOS) {");
 #else
     append_line(fs_buf, &fs_len, "void main() {");
 #endif
     // Reference approach to color wrapping as per GLideN64
     // Return wrapped value of x in interval [low, high)
 #ifdef __vita__
-	append_line(fs_buf, &fs_len, "#define WRAP(x, low, high) fmod((x)-(low), (high)-(low)) + (low)");
+    append_line(fs_buf, &fs_len, "#define WRAP(x, low, high) fmod((x)-(low), (high)-(low)) + (low)");
 #else
     append_line(fs_buf, &fs_len, "#define WRAP(x, low, high) mod((x)-(low), (high)-(low)) + (low)");
 #endif
@@ -530,9 +554,9 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
                 if (s && t) {
                     fs_len += sprintf(fs_buf + fs_len, "float4 texVal%d = hookTexture2D(uTex%d, clamp(vTexCoord%d, 0.5 / texSize%d, float2(vTexClampS%d, vTexClampT%d)), texSize%d);\n", i, i, i, i, i, i, i);
                 } else if (s) {
-                    fs_len += sprintf(fs_buf + fs_len, "float4 texVal%d = hookTexture2D(uTex%d, float2(clamp(vTexCoord%d.s, 0.5 / texSize%d.s, vTexClampS%d), vTexCoord%d.t), texSize%d);\n", i, i, i, i, i, i, i);
+                    fs_len += sprintf(fs_buf + fs_len, "float4 texVal%d = hookTexture2D(uTex%d, float2(clamp(vTexCoord%d.x, 0.5 / texSize%d.x, vTexClampS%d), vTexCoord%d.y), texSize%d);\n", i, i, i, i, i, i, i);
                 } else {
-                    fs_len += sprintf(fs_buf + fs_len, "float4 texVal%d = hookTexture2D(uTex%d, float2(vTexCoord%d.s, clamp(vTexCoord%d.t, 0.5 / texSize%d.t, vTexClampT%d)), texSize%d);\n", i, i, i, i, i, i, i);
+                    fs_len += sprintf(fs_buf + fs_len, "float4 texVal%d = hookTexture2D(uTex%d, float2(vTexCoord%d.x, clamp(vTexCoord%d.y, 0.5 / texSize%d.y, vTexClampT%d)), texSize%d);\n", i, i, i, i, i, i, i);
 #else
             fs_len += sprintf(fs_buf + fs_len, "vec2 texSize%d = textureSize(uTex%d, 0);\n", i, i);
 
@@ -692,10 +716,12 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
 #else
     glShaderSource(vertex_shader, 1, &sources[0], &lengths[0]);
 #endif
-	printf("VERTEX SHADER:\n%s\n", vs_buf);
     glCompileShader(vertex_shader);
     glGetShaderiv(vertex_shader, GL_COMPILE_STATUS, &success);
     if (!success) {
+#ifdef __vita__
+        printf("VERTEX SHADER:\n%s\n", vs_buf);
+#endif
         GLint max_length = 0;
         glGetShaderiv(vertex_shader, GL_INFO_LOG_LENGTH, &max_length);
         char error_log[1024];
@@ -711,10 +737,12 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
 #else
     glShaderSource(fragment_shader, 1, &sources[1], &lengths[1]);
 #endif
-	printf("FRAGMENT SHADER:\n%s\n", fs_buf);
     glCompileShader(fragment_shader);
     glGetShaderiv(fragment_shader, GL_COMPILE_STATUS, &success);
     if (!success) {
+#ifdef __vita__
+        printf("FRAGMENT SHADER:\n%s\n", fs_buf);
+#endif
         GLint max_length = 0;
         glGetShaderiv(fragment_shader, GL_INFO_LOG_LENGTH, &max_length);
         char error_log[1024];
@@ -830,9 +858,9 @@ static void gfx_opengl_select_texture(int tile, GLuint texture_id) {
     glActiveTexture(GL_TEXTURE0 + tile);
     glBindTexture(GL_TEXTURE_2D, texture_id);
 #ifdef __vita__
-	SceGxmTexture *gxm_tex = vglGetGxmTexture(GL_TEXTURE_2D);
-	tex_size[tile][0] = sceGxmTextureGetWidth(gxm_tex);
-	tex_size[tile][1] = sceGxmTextureGetHeight(gxm_tex);
+    SceGxmTexture *gxm_tex = vglGetGxmTexture(GL_TEXTURE_2D);
+    tex_size[tile][0] = sceGxmTextureGetWidth(gxm_tex);
+    tex_size[tile][1] = sceGxmTextureGetHeight(gxm_tex);
 #endif
 }
 
@@ -912,12 +940,12 @@ static void gfx_opengl_set_use_alpha(bool use_alpha) {
 static void gfx_opengl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
     //printf("flushing %d tris\n", buf_vbo_num_tris);
 #ifdef __vita__
-	if (cur_gl_program->used_textures[0]) {
-		glUniform2fv(cur_gl_program->uTexSize[0], 1, tex_size[0]);
-	}
-	if (cur_gl_program->used_textures[1]) {
-		glUniform2fv(cur_gl_program->uTexSize[1], 1, tex_size[1]);
-	}
+    if (cur_gl_program->used_textures[0]) {
+        glUniform2fv(cur_gl_program->uTexSize[0], 1, tex_size[0]);
+    }
+    if (cur_gl_program->used_textures[1]) {
+        glUniform2fv(cur_gl_program->uTexSize[1], 1, tex_size[1]);
+    }
 #endif
     glBufferData(GL_ARRAY_BUFFER, sizeof(float) * buf_vbo_len, buf_vbo, GL_STREAM_DRAW);
     glDrawArrays(GL_TRIANGLES, 0, 3 * buf_vbo_num_tris);
@@ -1017,9 +1045,9 @@ static void gfx_opengl_update_framebuffer_parameters(int fb_id, uint32_t width, 
                 glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
                 glBindTexture(GL_TEXTURE_2D, 0);
                 glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, fb.clrbuf, 0);
-			} 
+            } 
 #ifndef __vita__
-			else {
+            else {
                 glBindRenderbuffer(GL_RENDERBUFFER, fb.clrbuf_msaa);
                 glRenderbufferStorageMultisample(GL_RENDERBUFFER, msaa_level, GL_RGB8, width, height);
                 glBindRenderbuffer(GL_RENDERBUFFER, 0);
@@ -1034,7 +1062,7 @@ static void gfx_opengl_update_framebuffer_parameters(int fb_id, uint32_t width, 
                 glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
             }
 #ifndef __vita__
-			else {
+            else {
                 glRenderbufferStorageMultisample(GL_RENDERBUFFER, msaa_level, GL_DEPTH24_STENCIL8, width, height);
             }
 #endif
@@ -1090,6 +1118,7 @@ void *gfx_opengl_get_framebuffer_texture_id(int fb_id) {
 }
 
 void gfx_opengl_select_texture_fb(int fb_id) {
+	printf("fb_id is %d\n", fb_id);
     //glDisable(GL_DEPTH_TEST);
     glActiveTexture(GL_TEXTURE0 + 0);
     glBindTexture(GL_TEXTURE_2D, framebuffers[fb_id].clrbuf);
@@ -1122,8 +1151,9 @@ static std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff> gfx_o
         }
 
         glBindFramebuffer(GL_READ_FRAMEBUFFER, fb.fbo);
+#ifndef __vita__
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, pixel_depth_fb);
-
+#endif
         glDisable(GL_SCISSOR_TEST); // needed for the blit operation
 #ifndef __vita__
         {
@@ -1138,10 +1168,8 @@ static std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff> gfx_o
                 ++i;
             }
         }
-#else
-		printf("vita: Warning!\n");
-#endif
         glBindFramebuffer(GL_READ_FRAMEBUFFER, pixel_depth_fb);
+#endif
         vector<uint32_t> depth_stencil_values(coordinates.size());
         glReadPixels(0, 0, coordinates.size(), 1, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, depth_stencil_values.data());
 
