@@ -1134,7 +1134,9 @@ static std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff> gfx_o
         glBindFramebuffer(GL_FRAMEBUFFER, fb.fbo);
         int x = coordinates.begin()->first;
         int y = coordinates.begin()->second;
+#ifndef __vita__ // TODO
         glReadPixels(x, fb.invert_y ? fb.height - y : y, 1, 1, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, &depth_stencil_value);
+#endif
         res.emplace(*coordinates.begin(), (depth_stencil_value >> 18) << 2);
     } else {
         if (pixel_depth_rb_size < coordinates.size()) {
@@ -1171,8 +1173,9 @@ static std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff> gfx_o
         glBindFramebuffer(GL_READ_FRAMEBUFFER, pixel_depth_fb);
 #endif
         vector<uint32_t> depth_stencil_values(coordinates.size());
+#ifndef __vita__ // TODO
         glReadPixels(0, 0, coordinates.size(), 1, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, depth_stencil_values.data());
-
+#endif
         {
             size_t i = 0;
             for (const auto& coord : coordinates) {
