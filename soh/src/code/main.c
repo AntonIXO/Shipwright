@@ -64,14 +64,16 @@ int main(int argc, char** argv)
 #ifdef __vita__
 int main(int argc, char **argv)
 {
-	// We need a bigger stack to run SoH, so we create a new thread with a proper stack size
-	pthread_t t;
-	pthread_attr_t attr;
-	pthread_attr_init(&attr);
-	pthread_attr_setstacksize(&attr, 12 * 1024 * 1024);
-	pthread_create(&t, &attr, soh_main, NULL);
-	pthread_join(t, NULL);
-	return 0;
+    sceIoMkdir("ux0:data/soh/shader_cache", 0777);
+
+    // We need a bigger stack to run SoH, so we create a new thread with a proper stack size
+    pthread_t t;
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, 12 * 1024 * 1024);
+    pthread_create(&t, &attr, soh_main, NULL);
+    pthread_join(t, NULL);
+    return 0;
 }
 #endif
 

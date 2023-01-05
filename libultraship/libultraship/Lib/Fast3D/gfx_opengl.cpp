@@ -272,12 +272,32 @@ static void append_formula(char *buf, size_t *len, uint8_t c[2][4], bool do_sing
 static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shader_id0, uint32_t shader_id1) {
     struct CCFeatures cc_features;
     gfx_cc_get_features(shader_id0, shader_id1, &cc_features);
+    GLuint shader_program;
+    size_t num_floats = 4;
+
+#ifdef __vita__
+    #define SHADER_MAGIC 1
+    char fname[256];
+    sprintf(fname, "ux0:data/soh/shader_cache/%08X_%016llX_%d.bin", shader_id1, shader_id0, SHADER_MAGIC);
+    FILE *f = fopen(fname, "rb");
+    if (f) {
+        shader_program = glCreateProgram();
+        fseek(f, 0, SEEK_END);
+        int prog_size = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        void *prog_bin = malloc(prog_size - 4);
+		fread(&num_floats, 1, sizeof(size_t), f);
+        fread(prog_bin, 1, prog_size, f);
+        fclose(f);
+        glProgramBinary(shader_program, 0, prog_bin, prog_size);
+        free(prog_bin);
+    } else {
+#endif
 
     char vs_buf[1024];
     char fs_buf[3000];
     size_t vs_len = 0;
     size_t fs_len = 0;
-    size_t num_floats = 4;
 
 #ifdef __vita__
     int texcoord_id = 0;
@@ -758,10 +778,26 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
         abort();
     }
 
-    GLuint shader_program = glCreateProgram();
+    shader_program = glCreateProgram();
     glAttachShader(shader_program, vertex_shader);
     glAttachShader(shader_program, fragment_shader);
     glLinkProgram(shader_program);
+    
+#ifdef __vita__
+    // Caching precompiled shader on filesystem
+    f = fopen(fname, "wb");
+    int prog_size, prog_len = 0;
+    unsigned int prog_format = 0;
+    glGetProgramiv(shader_program, GL_PROGRAM_BINARY_LENGTH, &prog_size);
+    void *prog_bin = malloc(prog_size);
+    glGetProgramBinary(shader_program, prog_size, &prog_len, &prog_format, prog_bin);
+	fwrite(&num_floats, 1, sizeof(size_t), f);
+    fwrite(prog_bin, 1, prog_len, f);
+    fclose(f);
+    free(prog_bin);
+
+    }
+#endif
 
     size_t cnt = 0;
 
@@ -835,7 +871,7 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
 
     prg->frame_count_location = glGetUniformLocation(shader_program, "frame_count");
     prg->noise_scale_location = glGetUniformLocation(shader_program, "noise_scale");
-
+    
     return prg;
 }
 
