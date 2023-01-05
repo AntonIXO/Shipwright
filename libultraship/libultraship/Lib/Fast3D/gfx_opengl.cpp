@@ -70,7 +70,9 @@ struct ShaderProgram {
 
 #ifdef __vita__
 #include <vitasdk.h>
-float tex_size[2][2];
+float tex0_size[2];
+float tex1_size[2];
+float *cur_tex_size = tex0_size;
 ShaderProgram *cur_gl_program;
 #endif
 
@@ -95,7 +97,11 @@ static uint32_t frame_count;
 static vector<Framebuffer> framebuffers;
 static size_t current_framebuffer;
 static float current_noise_scale;
+#ifdef __vita__
+static FilteringMode current_filter_mode = FILTER_LINEAR;
+#else
 static FilteringMode current_filter_mode = FILTER_THREE_POINT;
+#endif
 
 GLuint pixel_depth_rb, pixel_depth_fb;
 size_t pixel_depth_rb_size;
@@ -859,8 +865,15 @@ static void gfx_opengl_select_texture(int tile, GLuint texture_id) {
     glBindTexture(GL_TEXTURE_2D, texture_id);
 #ifdef __vita__
     SceGxmTexture *gxm_tex = vglGetGxmTexture(GL_TEXTURE_2D);
-    tex_size[tile][0] = sceGxmTextureGetWidth(gxm_tex);
-    tex_size[tile][1] = sceGxmTextureGetHeight(gxm_tex);
+    if (tile == 0) {
+        tex0_size[0] = sceGxmTextureGetWidth(gxm_tex);
+        tex0_size[1] = sceGxmTextureGetHeight(gxm_tex);
+        cur_tex_size = tex0_size;
+    } else {
+        tex1_size[0] = sceGxmTextureGetWidth(gxm_tex);
+        tex1_size[1] = sceGxmTextureGetHeight(gxm_tex);
+        cur_tex_size = tex1_size;
+    }
 #endif
 }
 
@@ -871,6 +884,10 @@ static void gfx_opengl_select_texture(int tile, GLuint texture_id) {
 
 static void gfx_opengl_upload_texture(const uint8_t *rgba32_buf, uint32_t width, uint32_t height) {
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba32_buf);
+#ifdef __vita__
+    cur_tex_size[0] = width;
+    cur_tex_size[1] = height;
+#endif
 }
 
 #if defined(__SWITCH__) || defined(__vita__)
@@ -941,10 +958,10 @@ static void gfx_opengl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_
     //printf("flushing %d tris\n", buf_vbo_num_tris);
 #ifdef __vita__
     if (cur_gl_program->used_textures[0]) {
-        glUniform2fv(cur_gl_program->uTexSize[0], 1, tex_size[0]);
+        glUniform2fv(cur_gl_program->uTexSize[0], 1, tex0_size);
     }
     if (cur_gl_program->used_textures[1]) {
-        glUniform2fv(cur_gl_program->uTexSize[1], 1, tex_size[1]);
+        glUniform2fv(cur_gl_program->uTexSize[1], 1, tex1_size);
     }
 #endif
     glBufferData(GL_ARRAY_BUFFER, sizeof(float) * buf_vbo_len, buf_vbo, GL_STREAM_DRAW);
@@ -1118,7 +1135,6 @@ void *gfx_opengl_get_framebuffer_texture_id(int fb_id) {
 }
 
 void gfx_opengl_select_texture_fb(int fb_id) {
-	printf("fb_id is %d\n", fb_id);
     //glDisable(GL_DEPTH_TEST);
     glActiveTexture(GL_TEXTURE0 + 0);
     glBindTexture(GL_TEXTURE_2D, framebuffers[fb_id].clrbuf);
@@ -1190,6 +1206,10 @@ static std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff> gfx_o
 }
 
 void gfx_opengl_set_texture_filter(FilteringMode mode) {
+#ifdef __vita__
+    if (mode == FILTER_THREE_POINT)
+        mode = FILTER_LINEAR;
+#endif
     current_filter_mode = mode;
     gfx_texture_cache_clear();
 }
