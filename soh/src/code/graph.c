@@ -455,7 +455,8 @@ static void RunFrame()
         size = runFrameContext.ovl->instanceSize;
         osSyncPrintf("クラスサイズ＝%dバイト\n", size); // "Class size = %d bytes"
 
-        runFrameContext.gameState = SYSTEM_ARENA_MALLOC_DEBUG(sizeof(GlobalContext));
+
+        runFrameContext.gameState = SYSTEM_ARENA_MALLOC_DEBUG(size);
 
         if (!runFrameContext.gameState)
         {
@@ -468,7 +469,7 @@ static void RunFrame()
 
         // Setup the normal skybox once before entering any game states to avoid the 0xabababab crash.
         // The crash is due to certain skyboxes not loading all the data they need from Skybox_Setup.
-        if (!hasSetupSkybox) {
+        if (!hasSetupSkybox && size == sizeof(GlobalContext)) {
             GlobalContext* globalCtx = (GlobalContext*)runFrameContext.gameState;
             Skybox_Setup(globalCtx, &globalCtx->skyboxCtx, SKYBOX_NORMAL_SKY);
             hasSetupSkybox = true;
