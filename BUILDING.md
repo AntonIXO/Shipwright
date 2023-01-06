@@ -201,6 +201,26 @@ cmake --build build-wiiu --target soh # --target soh_wuhb (for building .wuhb)
 # To develop the project open the repository in VSCode (or your preferred editor)
 ```
 
+## PlayStation Vita
+1. Requires that your build machine is setup with the tools necessary for your platform above
+2. Requires that you have VitaSDK build tools installed 
+3. Clone the Ship of Harkinian repository
+4. Place one or more [compatible](#compatible-roms) roms in the `OTRExporter` directory with namings of your choice
+
+```bash
+cd Shipwright
+# Setup cmake project for your host machine
+cmake -H. -Bbuild-cmake -GNinja
+# Extract assets & generate OTR (run this anytime you need to regenerate OTR)
+cmake --build build-cmake --target ExtractAssets
+# Setup cmake project for building for Vita
+cmake -H. -Bbuild-vita -GNinja -DCMAKE_TOOLCHAIN_FILE=$VITASDK/share/vita.toolchain.cmake -DCMAKE_SYSTEM_NAME=PSVita
+# Build project and generate VPK
+cmake --build build-vita --target soh.vpk # or soh.vpk-vpk if cmake is >3.20
+# Now you can run the executable in ./build-switch/soh/soh.nro
+# To develop the project open the repository in VSCode (or your preferred editor)
+```
+
 # Compatible Roms
 ```
 OOT_PAL_GC      checksum 0x09465AC3

@@ -561,6 +561,28 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
                 -Wno-stringop-overflow
             >
         )
+    elseif (CMAKE_SYSTEM_NAME STREQUAL "PSVita")
+        target_compile_options(${PROJECT_NAME} PRIVATE
+            -Wall -Wextra -Wno-error
+            -Wno-return-type
+            -Wno-unused-parameter
+            -Wno-unused-function
+            -Wno-unused-variable
+            -Wno-missing-field-initializers
+            -Wno-parentheses
+            -Wno-narrowing
+            -Wno-c++11-narrowing
+            -Wno-implicit-function-declaration
+            -Wno-missing-braces
+            -Wno-incompatible-pointer-types
+            $<$<COMPILE_LANGUAGE:CXX>:-fpermissive>
+            $<$<COMPILE_LANGUAGE:CXX>:-Wno-deprecated-enum-enum-conversion>
+            -pthread
+        )
+
+        target_link_options(${PROJECT_NAME} PRIVATE
+            -pthread
+        )
     else()
         if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
 		set(CPU_OPTION -msse2 -mfpmath=sse)
@@ -659,6 +681,24 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "CafeOS")
     target_include_directories(${PROJECT_NAME} PRIVATE
         ${DEVKITPRO}/portlibs/wiiu/include/
     )
+elseif(CMAKE_SYSTEM_NAME STREQUAL "PSVita")
+    find_package(SDL2)
+    find_package(Threads REQUIRED)
+    set(ADDITIONAL_LIBRARY_DEPENDENCIES
+        "libultraship;"
+        "ZAPDUtils;"
+        SDL2::SDL2
+        vitaGL
+        vitashark
+        mathneon
+        SceShaccCgExt
+        SceAudioIn_stub
+        SceKernelDmacMgr_stub
+        SceIme_stub
+        taihen_stub
+        SceShaccCg_stub
+        Threads::Threads
+    )
 else()
     find_package(SDL2)
     set(THREADS_PREFER_PTHREAD_FLAG ON)
@@ -673,7 +713,7 @@ else()
 	)
 endif()
 
-if(NOT CMAKE_SYSTEM_NAME MATCHES "NintendoSwitch|CafeOS")
+if(NOT CMAKE_SYSTEM_NAME MATCHES "NintendoSwitch|CafeOS|PSVita")
 INSTALL(TARGETS soh DESTINATION . COMPONENT ship)
 endif()
 
@@ -687,11 +727,11 @@ execute_process(COMMAND ${CURL} -sSfL https://raw.githubusercontent.com/gabomdq/
 if("${CMAKE_SYSTEM_NAME}" STREQUAL "Darwin")
 configure_file( ${CMAKE_CURRENT_SOURCE_DIR}/macosx/Info.plist.in ${CMAKE_BINARY_DIR}/macosx/Info.plist @ONLY)
 INSTALL(FILES ${CMAKE_BINARY_DIR}/gamecontrollerdb.txt DESTINATION ../MacOS COMPONENT ship)
-elseif(NOT "${CMAKE_SYSTEM_NAME}" MATCHES "NintendoSwitch|CafeOS")
+elseif(NOT "${CMAKE_SYSTEM_NAME}" MATCHES "NintendoSwitch|CafeOS|PSVita")
 INSTALL(FILES ${CMAKE_BINARY_DIR}/gamecontrollerdb.txt DESTINATION . COMPONENT ship)
 endif()
 
-if(CMAKE_SYSTEM_NAME MATCHES "NintendoSwitch|CafeOS")
+if(CMAKE_SYSTEM_NAME MATCHES "NintendoSwitch|CafeOS|PSVita")
     if (NOT TARGET pathconf)
         add_library(pathconf OBJECT platform/pathconf.c)
     endif()
@@ -727,5 +767,25 @@ wut_create_wuhb(${PROJECT_NAME}
 )
 
 INSTALL(FILES ${CMAKE_CURRENT_BINARY_DIR}/soh.rpx ${CMAKE_CURRENT_BINARY_DIR}/soh.wuhb DESTINATION . COMPONENT ship)
+
+elseif(CMAKE_SYSTEM_NAME MATCHES "PSVita")
+
+include("${VITASDK}/share/vita.cmake" REQUIRED)
+
+set(VITA_APP_NAME "Ship of Harkinian")
+set(VITA_TITLEID  "SHIPOFHAR")
+set(VITA_VERSION  "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}")
+set(VITA_MKSFOEX_FLAGS "-d ATTRIBUTE2=12")
+
+vita_create_self(eboot.bin ${PROJECT_NAME} UNSAFE)
+vita_create_vpk(soh.vpk ${VITA_TITLEID} eboot.bin
+        VERSION ${VITA_VERSION}
+        NAME ${VITA_APP_NAME}
+        #FILE ${CMAKE_CURRENT_SOURCE_DIR}/livearea/icon0.png sce_sys/icon0.png
+        #  ${CMAKE_CURRENT_SOURCE_DIR}/livearea/default_gate.png sce_sys/livearea/contents/default_gate.png
+        #  ${CMAKE_CURRENT_SOURCE_DIR}/livearea/bg0.png sce_sys/livearea/contents/bg0.png
+)
+
+INSTALL(FILES ${CMAKE_CURRENT_BINARY_DIR}/soh.vpk DESTINATION . COMPONENT ship)
 
 endif()

@@ -489,9 +489,22 @@ else()
 	)
 endif()
 
-if(CMAKE_SYSTEM_NAME MATCHES "NintendoSwitch|CafeOS")
+if(CMAKE_SYSTEM_NAME MATCHES "NintendoSwitch|CafeOS|PSVita")
 add_library(pathconf OBJECT pathconf.c)
 target_link_libraries(${PROJECT_NAME} PRIVATE "${ADDITIONAL_LIBRARY_DEPENDENCIES}" $<TARGET_OBJECTS:pathconf> )
+elseif(CMAKE_SYSTEM_NAME STREQUAL "PSVita")
+    set(THREADS_PREFER_PTHREAD_FLAG ON)
+    find_package(Threads REQUIRED)
+    target_link_libraries(${PROJECT_NAME}
+        storm
+        SDL2::SDL2
+        vitaGL
+        vitashark
+        SceShaccCgExt
+        taihen_stub
+        SceShaccCg_stub
+        Threads::Threads
+    )
 else()
 target_link_libraries(${PROJECT_NAME} PRIVATE "${ADDITIONAL_LIBRARY_DEPENDENCIES}")
 endif()

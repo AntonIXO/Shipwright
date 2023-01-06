@@ -64,6 +64,9 @@
 #include <port/wiiu/WiiUImpl.h>
 #endif
 
+#ifdef __vita__
+#include <vitasdk.h>
+#endif
 
 #include "Enhancements/custom-message/CustomMessageTypes.h"
 #include <functions.h>
@@ -657,6 +660,9 @@ extern "C" uint64_t GetFrequency() {
 }
 
 extern "C" uint64_t GetPerfCounter() {
+#ifdef __vita__
+	return sceKernelGetProcessTimeWide() * 1000;
+#else
     struct timespec monotime;
     clock_gettime(CLOCK_MONOTONIC, &monotime);
 
@@ -664,6 +670,7 @@ extern "C" uint64_t GetPerfCounter() {
 
     // in milliseconds
     return monotime.tv_sec * 1000 + remainingMs;
+#endif
 }
 #endif
 

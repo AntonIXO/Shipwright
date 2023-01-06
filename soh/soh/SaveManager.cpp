@@ -709,7 +709,7 @@ void SaveManager::SaveFile(int fileNum) {
         section.second.second();
     }
 
-#if defined(__SWITCH__) || defined(__WIIU__)
+#if defined(__SWITCH__) || defined(__WIIU__) || defined(__vita__)
     FILE* w = fopen(GetFileName(fileNum).c_str(), "w");
     std::string json_string = baseBlock.dump(4);
     fwrite(json_string.c_str(), sizeof(char), json_string.length(), w);
@@ -1664,7 +1664,7 @@ void SaveManager::LoadStruct(const std::string& name, LoadStructFunc func) {
     }
 }
 
-#if defined(__WIIU__) || defined(__SWITCH__)
+#if defined(__WIIU__) || defined(__SWITCH__) || defined(__vita__)
 // std::filesystem::copy_file doesn't work properly with the Wii U's toolchain atm
 int copy_file(const char* src, const char* dst)
 {
@@ -1694,7 +1694,7 @@ int copy_file(const char* src, const char* dst)
 void SaveManager::CopyZeldaFile(int from, int to) {
     assert(std::filesystem::exists(GetFileName(from)));
     DeleteZeldaFile(to);
-#if defined(__WIIU__) || defined(__SWITCH__)
+#if defined(__WIIU__) || defined(__SWITCH__) || defined(__vita__)
     copy_file(GetFileName(from).c_str(), GetFileName(to).c_str());
 #else
     std::filesystem::copy_file(GetFileName(from), GetFileName(to));

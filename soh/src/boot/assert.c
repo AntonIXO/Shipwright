@@ -1,6 +1,12 @@
 #include "global.h"
 
-#ifndef __SWITCH__
+#ifdef __vita__
+#include <stdio.h>
+#include <vitasdk.h>
+int _newlib_heap_size_user = 300 * 1024 * 1024;
+#endif
+
+#if !defined(__SWITCH__) && !defined(__vita__)
 #ifdef __WIIU__
 void _assert(const char* exp, const char* file, s32 line) {
 #else
