@@ -1,15 +1,15 @@
 #ifndef Z_EN_GIRLA_H
 #define Z_EN_GIRLA_H
 
-#include "ultra64.h"
+#include <libultraship/libultra.h>
 #include "global.h"
 
 struct EnGirlA;
 
-typedef void (*EnGirlAActionFunc)(struct EnGirlA*, GlobalContext*);
-typedef void (*EnGirlA2Func)(GlobalContext*, struct EnGirlA*);
-typedef void (*EnGirlA3Func)(Actor*, GlobalContext*, s32);
-typedef s32 (*EnGirlA4Func)(GlobalContext*, struct EnGirlA*);
+typedef void (*EnGirlAActionFunc)(struct EnGirlA*, PlayState*);
+typedef void (*EnGirlA2Func)(PlayState*, struct EnGirlA*);
+typedef void (*EnGirlA3Func)(Actor*, PlayState*, s32);
+typedef s32 (*EnGirlA4Func)(PlayState*, struct EnGirlA*);
 
 typedef struct EnGirlA {
     /* 0x0000 */ Actor actor;

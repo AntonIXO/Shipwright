@@ -1,8 +1,11 @@
 #pragma once
 #include "randomizerTypes.h"
 #include <string>
-#include <vector>
 #include <map>
+
+// Forward Declarations to avoid duplicate definition issues
+enum ActorID : int;
+enum SceneID : int;
 
 // Check types based on main settings
 typedef enum {
@@ -16,10 +19,16 @@ typedef enum {
     RCTYPE_GF_KEY, // Gerudo Fortress Keys
     RCTYPE_BOSS_KEY, // Boss Keys
     RCTYPE_GANON_BOSS_KEY, // Ganon's boss key
-    RCTYPE_SHOP, // shops/scrubs
+    RCTYPE_SHOP, // shops
+    RCTYPE_SCRUB, // scrubs
+    RCTYPE_MERCHANT, // merchants
     RCTYPE_CHEST_GAME, //todo replace this once we implement it, just using it to exclude for now
     RCTYPE_LINKS_POCKET, //todo this feels hacky
     RCTYPE_GOSSIP_STONE,
+    RCTYPE_SONG_LOCATION, // Song locations
+    RCTYPE_BOSS_HEART_OR_OTHER_REWARD, // Boss heart container or lesser dungeon rewards (lens, ice arrow)
+    RCTYPE_DUNGEON_REWARD, // Dungeon rewards (blue warps)
+    RCTYPE_OCARINA, // Ocarina locations
 } RandomizerCheckType;
 
 typedef enum {
@@ -61,14 +70,24 @@ typedef enum {
     RCAREA_ICE_CAVERN,
     RCAREA_GERUDO_TRAINING_GROUND,
     RCAREA_GANONS_CASTLE,
+    //If adding any more areas, Check Tracker will need a refactor
     RCAREA_INVALID
 } RandomizerCheckArea;
+
+#define TWO_ACTOR_PARAMS(a, b) (abs(a) << 16) | abs(b)
+
+#define RC_OBJECT(rc, rc_v_or_mq, rc_type, rc_area, actor_id, scene_id, actor_params, og_item_id, rc_shortname, rc_spoilername) \
+    { rc, {rc, rc_v_or_mq, rc_type, rc_area, actor_id, scene_id, actor_params, og_item_id, false, rc_shortname, rc_spoilername} }
 
 typedef struct {
     RandomizerCheck rc;
     RandomizerCheckVanillaOrMQ vOrMQ;
     RandomizerCheckType rcType;
     RandomizerCheckArea rcArea;
+    ActorID actorId;
+    SceneID sceneId;
+    int32_t actorParams;
+    GetItemID ogItemId;
     bool visibleInImgui;
     std::string rcShortName;
     std::string rcSpoilerName;
@@ -78,6 +97,9 @@ namespace RandomizerCheckObjects {
     bool AreaIsDungeon(RandomizerCheckArea area);
     bool AreaIsOverworld(RandomizerCheckArea area);
     std::string GetRCAreaName(RandomizerCheckArea area);
-    std::map<RandomizerCheckArea, std::vector<RandomizerCheckObject>> GetAllRCObjects();
+    std::map<RandomizerCheck, RandomizerCheckObject> GetAllRCObjects();
+    std::map<RandomizerCheckArea, std::map<RandomizerCheck, RandomizerCheckObject*>> GetAllRCObjectsByArea();
+    std::map<SceneID, RandomizerCheckArea> GetAllRCAreaBySceneID();
+    RandomizerCheckArea GetRCAreaBySceneID(SceneID sceneId);
     void UpdateImGuiVisibility();
 }

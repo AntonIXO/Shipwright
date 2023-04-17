@@ -1,7 +1,7 @@
 #ifndef _FILE_CHOOSE_H_
 #define _FILE_CHOOSE_H_
 
-#include "ultra64.h"
+#include <libultraship/libultra.h>
 #include "global.h"
 #include "vt.h"
 
@@ -55,7 +55,12 @@ typedef enum {
     /* 37 */ CM_OPTIONS_MENU,
     /* 38 */ CM_START_OPTIONS,
     /* 39 */ CM_OPTIONS_TO_MAIN,
-    /* 40 */ CM_UNUSED_DELAY
+    /* 40 */ CM_UNUSED_DELAY,
+    CM_ROTATE_TO_QUEST_MENU,
+    CM_QUEST_MENU,
+    CM_START_QUEST_MENU,
+    CM_QUEST_TO_MAIN,
+    CM_NAME_ENTRY_TO_QUEST_MENU,
 } ConfigMode;
 
 typedef enum {
@@ -144,6 +149,11 @@ typedef enum {
 } AudioOption;
 
 typedef enum {
+    /* 0 */ FS_TARGET_SWITCH,
+    /* 1 */ FS_TARGET_HOLD,
+} TargetOption;
+
+typedef enum {
     /* 0 */ FS_CHAR_PAGE_HIRA,
     /* 1 */ FS_CHAR_PAGE_KATA,
     /* 2 */ FS_CHAR_PAGE_ENG
@@ -204,8 +214,8 @@ void FileChoose_DrawNameEntry(GameState* thisx);
 void FileChoose_DrawCharacter(GraphicsContext* gfxCtx, void* texture, s16 vtx);
 
 void HandleMouseInput(Input* input);
-u8 HandleMouseCursor(FileChooseContext* this, Input* input, int minx, int miny, int maxx, int maxy);
-Vec2f HandleMouseCursorSplit(FileChooseContext* this, Input* input, int minx, int miny, int maxx, int maxy, int countx,
+u8 HandleMouseCursor(FileChooseContext* thisx, Input* input, int minx, int miny, int maxx, int maxy);
+Vec2f HandleMouseCursorSplit(FileChooseContext* thisx, Input* input, int minx, int miny, int maxx, int maxy, int countx,
                              int county);
 
 extern s16 D_808123F0[];

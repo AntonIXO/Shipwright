@@ -1,12 +1,12 @@
 #ifndef Z_EN_COW_H
 #define Z_EN_COW_H
 
-#include "ultra64.h"
+#include <libultraship/libultra.h>
 #include "global.h"
 
 struct EnCow;
 
-typedef void (*EnCowActionFunc)(struct EnCow*, GlobalContext*);
+typedef void (*EnCowActionFunc)(struct EnCow*, PlayState*);
 
 typedef struct EnCow {
     /* 0x0000 */ Actor actor;
@@ -20,10 +20,5 @@ typedef struct EnCow {
     /* 0x027A */ u16 unk_27A;
     /* 0x027C */ EnCowActionFunc actionFunc;
 } EnCow; // size = 0x0280
-
-typedef struct CowInfo {
-    RandomizerInf randomizerInf;
-    RandomizerCheck randomizerCheck;
-} CowInfo;
 
 #endif

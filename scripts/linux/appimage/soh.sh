@@ -9,6 +9,10 @@ if [ -z ${SHIP_HOME+x} ]; then
 export SHIP_HOME=$PWD
 fi
 
+if [ -z ${SHIP_BIN_DIR+x} ]; then
+export SHIP_BIN_DIR="$HERE/usr/bin"
+fi
+
 while [[ (! -e "$SHIP_HOME"/oot.otr) || (! -e "$SHIP_HOME"/oot-mq.otr) ]]; do
         for romfile in "$SHIP_HOME"/*.*64
         do
@@ -18,7 +22,7 @@ while [[ (! -e "$SHIP_HOME"/oot.otr) || (! -e "$SHIP_HOME"/oot-mq.otr) ]]; do
                 export OLDPWD="$PWD"
                 mkdir -p "$ASSETDIR"/tmp
 	            mkdir -p "$ASSETDIR"/Extract
-                ln -s $romfile "$ASSETDIR"/tmp/rom.z64
+                ln -s "$romfile" "$ASSETDIR"/tmp/rom.z64
                 cd "$ASSETDIR"
                 ROMHASH=$(sha1sum -b "$ASSETDIR"/tmp/rom.z64 | awk '{ print $1 }')
                 case "$ROMHASH" in
@@ -64,22 +68,26 @@ while [[ (! -e "$SHIP_HOME"/oot.otr) || (! -e "$SHIP_HOME"/oot-mq.otr) ]]; do
                     echo -e "\n$romfile - $ROMHASH rom hash does not match\n"
                     continue;;
                 esac
-                cp -r "$ASSETDIR"/assets/game "$ASSETDIR"/Extract/assets
-                if [ -n "$ZENITY" ]; then
-                    (echo "# 25%"; echo "25"; sleep 2; echo "# 50%"; echo "50"; sleep 3; echo "# 75%"; echo "75"; sleep 2; echo "# 100%"; echo "100"; sleep 3) |
-                    zenity --progress --title="OTR Generating..." --timeout=10 --percentage=0 --icon-name=soh --window-icon=soh.png --height=80 --width=400 &
-                else
-                    echo "Processing..."
+                if [[ ! -e "$SHIP_HOME"/"$OTRNAME" ]]; then
+                    cp -r "$ASSETDIR"/assets/game "$ASSETDIR"/Extract/assets
+                    if [ -n "$ZENITY" ]; then
+                        (echo "# 25%"; echo "25"; sleep 2; echo "# 50%"; echo "50"; sleep 3; echo "# 75%"; echo "75"; sleep 2; echo "# 100%"; echo "100"; sleep 3) |
+                        zenity --progress --title="OTR Generating..." --timeout=10 --percentage=0 --icon-name=soh --window-icon=soh.png --height=80 --width=400 &
+                    else
+                        echo "Processing..."
+                    fi
+                    assets/extractor/ZAPD.out ed -eh -i assets/extractor/xmls/"${ROM}" -b tmp/rom.z64 -fl assets/extractor/filelists -o placeholder -osf placeholder -gsf 1 -rconf assets/extractor/Config_"${ROM}".xml -se OTR --otrfile "${OTRNAME}" > /dev/null 2>&1
+                    cp "$ASSETDIR"/"$OTRNAME" "$SHIP_HOME"
                 fi
-                assets/extractor/ZAPD.out ed -eh -i assets/extractor/xmls/"${ROM}" -b tmp/rom.z64 -fl assets/extractor/filelists -o placeholder -osf placeholder -gsf 1 -rconf assets/extractor/Config_"${ROM}".xml -se OTR --otrfile "${OTRNAME}" > /dev/null 2>&1
-                cp "$ASSETDIR"/"$OTRNAME" "$SHIP_HOME"
             else
-                if [ -n "$ZENITY" ]; then
-                    zenity --error --timeout=5 --text="Place ROM in $SHIP_HOME" --title="Missing ROM file" --width=500 --width=200
-                else
-                    echo -e "\nPlace ROM in this folder\n"
-                fi	
-                exit
+                if [[ (! -e "$SHIP_HOME"/oot.otr) && (! -e "$SHIP_HOME"/oot-mq.otr) ]]; then
+                    if [ -n "$ZENITY" ]; then
+                        zenity --error --timeout=5 --text="Place ROM in $SHIP_HOME" --title="Missing ROM file" --width=500 --width=200
+                    else
+                        echo -e "\nPlace ROM in this folder\n"
+                    fi	
+                    exit
+                fi
             fi
         done
         if [[ (! -e "$SHIP_HOME"/oot.otr) && (! -e "$SHIP_HOME"/oot-mq.otr) ]]; then
@@ -91,10 +99,10 @@ while [[ (! -e "$SHIP_HOME"/oot.otr) || (! -e "$SHIP_HOME"/oot-mq.otr) ]]; do
             rm -r "$ASSETDIR"
             exit
         else
-            (cd "$HERE/usr/bin"; ./soh.elf)
+            (cd "$SHIP_BIN_DIR"; ./soh.elf)
             exit
         fi
         rm -r "$ASSETDIR"
 done	
-	(cd "$HERE/usr/bin"; ./soh.elf)
+	(cd "$SHIP_BIN_DIR"; ./soh.elf)
 exit

@@ -1,13 +1,13 @@
 #include "actorViewer.h"
 #include "../../util.h"
 #include "../../UIWidgets.hpp"
-#include <libultraship/ImGuiImpl.h>
+#include <ImGuiImpl.h>
 
 #include <array>
 #include <bit>
 #include <map>
 #include <string>
-#include <libultraship/Cvar.h>
+#include <libultraship/bridge.h>
 
 extern "C" {
 #include <z64.h>
@@ -15,7 +15,7 @@ extern "C" {
 #include "variables.h"
 #include "functions.h"
 #include "macros.h"
-extern GlobalContext* gGlobalCtx;
+extern PlayState* gPlayState;
 
 #include "textures/icon_item_static/icon_item_static.h"
 #include "textures/icon_item_24_static/icon_item_24_static.h"
@@ -99,7 +99,7 @@ std::map<u16, const char*> actorDescriptions = {
     { ACTOR_EN_TP, "Electric Tailpasaran" },
     { ACTOR_EN_ST, "Skulltula" },
     { ACTOR_EN_BW, "Torch Slug" },
-    { ACTOR_EN_A_OBJ, "Gameplay_keep items" },
+    { ACTOR_EN_A_OBJ, "Play_keep items" },
     { ACTOR_EN_EIYER, "Stinger (Land)" },
     { ACTOR_EN_RIVER_SOUND, "Ambient Sound Effects" },
     { ACTOR_EN_HORSE_NORMAL, "Horse" },
@@ -516,8 +516,8 @@ void PopulateActorDropdown(int i, std::vector<Actor*>& data) {
     if (data.size() != 0) {
         data.clear();
     }
-    if (gGlobalCtx != nullptr) {
-        ActorListEntry currList = gGlobalCtx->actorCtx.actorLists[i];
+    if (gPlayState != nullptr) {
+        ActorListEntry currList = gPlayState->actorCtx.actorLists[i];
         Actor* currAct = currList.head;
         if (currAct != nullptr) {
             while (currAct != nullptr) {
@@ -531,7 +531,7 @@ void PopulateActorDropdown(int i, std::vector<Actor*>& data) {
 
 void DrawActorViewer(bool& open) {
     if (!open) {
-        CVar_SetS32("gActorViewerEnabled", 0);
+        CVarSetInteger("gActorViewerEnabled", 0);
         return;
     }
 
@@ -541,8 +541,8 @@ void DrawActorViewer(bool& open) {
         return;
     }
 
-    static Actor display;
-    static const Actor empty{};
+    static Actor* display;
+    static Actor empty{};
     static Actor* fetch = NULL;
     static ActorInfo newActor = {0,0, {0, 0, 0}, {0, 0, 0}};
     static ActorOverlay* dispOverlay;
@@ -555,10 +555,10 @@ void DrawActorViewer(bool& open) {
     static std::vector<Actor*> list;
     static u16 lastSceneId = 0;
 
-    if (gGlobalCtx != nullptr) {
-        needs_reset = lastSceneId != gGlobalCtx->sceneNum;
+    if (gPlayState != nullptr) {
+        needs_reset = lastSceneId != gPlayState->sceneNum;
         if (needs_reset) {
-            display = empty;
+            display = &empty;
             fetch = nullptr;
             dispOverlay = nullptr;
             actor = category = 0;
@@ -566,7 +566,7 @@ void DrawActorViewer(bool& open) {
             list.clear();
             needs_reset = false;
         }
-        lastSceneId = gGlobalCtx->sceneNum;
+        lastSceneId = gPlayState->sceneNum;
         if (ImGui::BeginCombo("Actor Type", acMapping[category])) {
             for (int i = 0; i < acMapping.size(); i++) {
                 if (ImGui::Selectable(acMapping[i])) {
@@ -579,9 +579,9 @@ void DrawActorViewer(bool& open) {
         }
 
         if (ImGui::BeginCombo("Actor", filler.c_str())) {
-            if (gGlobalCtx != nullptr && lastSceneId != gGlobalCtx->sceneNum) {
+            if (gPlayState != nullptr && lastSceneId != gPlayState->sceneNum) {
                 PopulateActorDropdown(category, list);
-                lastSceneId = gGlobalCtx->sceneNum;
+                lastSceneId = gPlayState->sceneNum;
             }
             for (int i = 0; i < list.size(); i++) {
                 std::string label = std::to_string(i) + ": " + list[i]->overlayEntry->name;
@@ -591,7 +591,7 @@ void DrawActorViewer(bool& open) {
 
                 if (ImGui::Selectable(label.c_str())) {
                     rm = LIST;
-                    display = *list[i];
+                    display = list[i];
                     actor = i;
                     filler = label;
                     break;
@@ -601,39 +601,51 @@ void DrawActorViewer(bool& open) {
         }
 
         if (ImGui::TreeNode("Selected Actor")) {
-            dispOverlay = display.overlayEntry;
+            dispOverlay = display->overlayEntry;
             DrawGroupWithBorder([&]() {
                 ImGui::Text("Name: %s", dispOverlay != nullptr ? dispOverlay->name : "???");
-                ImGui::Text("Description: %s", dispOverlay != nullptr ? GetActorDescription(display.id).c_str() : "???");
-                ImGui::Text("Category: %s", dispOverlay != nullptr ? acMapping[display.category] : "???");
-                ImGui::Text("ID: %d", display.id);
-                ImGui::Text("Parameters: %d", display.params);
+                ImGui::Text("Description: %s", dispOverlay != nullptr ? GetActorDescription(display->id).c_str() : "???");
+                ImGui::Text("Category: %s", dispOverlay != nullptr ? acMapping[display->category] : "???");
+                ImGui::Text("ID: %d", display->id);
+                ImGui::Text("Parameters: %d", display->params);
             });
 
             ImGui::PushItemWidth(ImGui::GetFontSize() * 6);
 
             DrawGroupWithBorder([&]() {
                 ImGui::Text("Actor Position");
-                ImGui::InputScalar("x pos", ImGuiDataType_Float, &display.world.pos.x);
+                ImGui::InputScalar("x pos", ImGuiDataType_Float, &display->world.pos.x);
                 ImGui::SameLine();
-                ImGui::InputScalar("y pos", ImGuiDataType_Float, &display.world.pos.y);
+                ImGui::InputScalar("y pos", ImGuiDataType_Float, &display->world.pos.y);
                 ImGui::SameLine();
-                ImGui::InputScalar("z pos", ImGuiDataType_Float, &display.world.pos.z);
+                ImGui::InputScalar("z pos", ImGuiDataType_Float, &display->world.pos.z);
             });
 
             DrawGroupWithBorder([&]() {
                 ImGui::Text("Actor Rotation");
-                ImGui::InputScalar("x rot", ImGuiDataType_S16, &display.world.rot.x);
+                ImGui::InputScalar("x rot", ImGuiDataType_S16, &display->world.rot.x);
                 ImGui::SameLine();
-                ImGui::InputScalar("y rot", ImGuiDataType_S16, &display.world.rot.y);
+                ImGui::InputScalar("y rot", ImGuiDataType_S16, &display->world.rot.y);
                 ImGui::SameLine();
-                ImGui::InputScalar("z rot", ImGuiDataType_S16, &display.world.rot.z);
+                ImGui::InputScalar("z rot", ImGuiDataType_S16, &display->world.rot.z);
             });
 
-            if (display.category == ACTORCAT_BOSS || display.category == ACTORCAT_ENEMY) {
-                ImGui::InputScalar("Enemy Health", ImGuiDataType_U8, &display.colChkInfo.health);
+            if (display->category == ACTORCAT_BOSS || display->category == ACTORCAT_ENEMY) {
+                ImGui::InputScalar("Enemy Health", ImGuiDataType_U8, &display->colChkInfo.health);
                 UIWidgets::InsertHelpHoverText("Some actors might not use this!");
             }
+
+            DrawGroupWithBorder([&]() {
+                ImGui::Text("flags");
+                UIWidgets::DrawFlagArray32("flags", display->flags);
+            });
+
+            ImGui::SameLine();
+
+            DrawGroupWithBorder([&]() {
+                ImGui::Text("bgCheckFlags");
+                UIWidgets::DrawFlagArray16("bgCheckFlags", display->bgCheckFlags);
+            });
 
             if (ImGui::Button("Refresh")) {
                 PopulateActorDropdown(category, list);
@@ -641,10 +653,10 @@ void DrawActorViewer(bool& open) {
                     case INTERACT:
                     case HELD:
                     case TARGET:
-                        display = *fetch;
+                        display = fetch;
                         break;
                     case LIST:
-                        display = *list[actor];
+                        display = list[actor];
                         break;
                     default:
                         break;
@@ -652,16 +664,16 @@ void DrawActorViewer(bool& open) {
             }
 
             if (ImGui::Button("Go to Actor")) {
-                Player* player = GET_PLAYER(gGlobalCtx);
-                Math_Vec3f_Copy(&player->actor.world.pos, &display.world.pos);
+                Player* player = GET_PLAYER(gPlayState);
+                Math_Vec3f_Copy(&player->actor.world.pos, &display->world.pos);
                 Math_Vec3f_Copy(&player->actor.home.pos, &player->actor.world.pos);
             }
 
             if (ImGui::Button("Fetch from Target")) {
-                Player* player = GET_PLAYER(gGlobalCtx);
+                Player* player = GET_PLAYER(gPlayState);
                 fetch = player->targetActor;
                 if (fetch != NULL) {
-                    display = *fetch;
+                    display = fetch;
                     category = fetch->category;
                     PopulateActorDropdown(category, list);
                     rm = TARGET;
@@ -669,10 +681,10 @@ void DrawActorViewer(bool& open) {
             }
             UIWidgets::InsertHelpHoverText("Grabs actor with target arrow above it. You might need C-Up for enemies");
             if (ImGui::Button("Fetch from Held")) {
-                Player* player = GET_PLAYER(gGlobalCtx);
+                Player* player = GET_PLAYER(gPlayState);
                 fetch = player->heldActor;
                 if (fetch != NULL) {
-                    display = *fetch;
+                    display = fetch;
                     category = fetch->category;
                     PopulateActorDropdown(category, list);
                     rm = HELD;
@@ -680,10 +692,10 @@ void DrawActorViewer(bool& open) {
             }
             UIWidgets::InsertHelpHoverText("Grabs actor that Link is holding");
             if (ImGui::Button("Fetch from Interaction")) {
-                Player* player = GET_PLAYER(gGlobalCtx);
+                Player* player = GET_PLAYER(gPlayState);
                 fetch = player->interactRangeActor;
                 if (fetch != NULL) {
-                    display = *fetch;
+                    display = fetch;
                     category = fetch->category;
                     PopulateActorDropdown(category, list);
                     rm = INTERACT;
@@ -722,7 +734,7 @@ void DrawActorViewer(bool& open) {
             });
 
             if (ImGui::Button("Fetch from Link")) {
-                Player* player = GET_PLAYER(gGlobalCtx);
+                Player* player = GET_PLAYER(gPlayState);
                 Vec3f newPos = player->actor.world.pos;
                 Vec3s newRot = player->actor.world.rot;
                 newActor.pos = newPos;
@@ -731,19 +743,19 @@ void DrawActorViewer(bool& open) {
 
             if (ImGui::Button("Spawn")) {
                 if (newActor.id >= 0 && newActor.id < ACTOR_ID_MAX && gActorOverlayTable[newActor.id].initInfo != NULL) {
-                    Actor_Spawn(&gGlobalCtx->actorCtx, gGlobalCtx, newActor.id, newActor.pos.x, newActor.pos.y,
-                                newActor.pos.z, newActor.rot.x, newActor.rot.y, newActor.rot.z, newActor.params);
+                    Actor_Spawn(&gPlayState->actorCtx, gPlayState, newActor.id, newActor.pos.x, newActor.pos.y,
+                                newActor.pos.z, newActor.rot.x, newActor.rot.y, newActor.rot.z, newActor.params, 0);
                 } else {
                     func_80078884(NA_SE_SY_ERROR);
                 }
             }
 
             if (ImGui::Button("Spawn as Child")) {
-                Actor* parent = &display;
+                Actor* parent = display;
                 if (parent != NULL) {
                     if (newActor.id >= 0 && newActor.id < ACTOR_ID_MAX &&
                         gActorOverlayTable[newActor.id].initInfo != NULL) {
-                        Actor_SpawnAsChild(&gGlobalCtx->actorCtx, parent, gGlobalCtx, newActor.id, newActor.pos.x,
+                        Actor_SpawnAsChild(&gPlayState->actorCtx, parent, gPlayState, newActor.id, newActor.pos.x,
                                            newActor.pos.y, newActor.pos.z, newActor.rot.x, newActor.rot.y,
                                            newActor.rot.z, newActor.params);
                     } else {

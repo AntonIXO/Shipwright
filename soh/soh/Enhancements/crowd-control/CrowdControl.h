@@ -17,16 +17,10 @@
 #include <chrono>
 #include <future>
 
+#include "../game-interactor/GameInteractor.h"
+
 class CrowdControl {
     private:
-        typedef struct CCPacket {
-            uint32_t packetId;
-            std::string effectType;
-            uint32_t effectValue;
-            std::string effectCategory;
-            long timeRemaining;
-        } CCPacket;
-
         enum EffectResult {
             /// <summary>The effect executed successfully.</summary>
             Success = 0x00,
@@ -46,6 +40,8 @@ class CrowdControl {
             Resumed = 0x07,
             /// <summary>The timed effect has finished.</summary>
             Finished = 0x08,
+            /// <summary>Effect is being initiated. SoH exclusive to check against if an effect state has changed or not.</summary>
+            Initiate = 0xFE,
             /// <summary>The processor isn't ready to start or has shut down.</summary>
             NotReady = 0xFF
         };
@@ -64,28 +60,48 @@ class CrowdControl {
             long timeRemaining;
             ResponseType type = ResponseType::EffectRequest;
         };
+
+        typedef struct Effect {
+            uint32_t id;
+            uint32_t spawnParams[2];
+            uint32_t category = 0;
+            long timeRemaining;
+            GameInteractionEffectBase *giEffect;
+
+            // Metadata used while executing (only for timed effects)
+            bool isPaused;
+            EffectResult lastExecutionResult;
+        } Effect;
         
         std::thread ccThreadReceive;
+        std::thread ccThreadProcess;
 
         TCPsocket tcpsock;
         IPaddress ip;
 
+        bool isEnabled;
         bool connected;
 
         char received[512];
 
-        std::vector<CCPacket*> receivedCommands;
-        std::mutex receivedCommandsMutex;
+        std::vector<Effect*> activeEffects;
+        std::mutex activeEffectsMutex;
 
-        void RunCrowdControl(CCPacket* packet);
-        void ReceiveFromCrowdControl();
-        EffectResult ExecuteEffect(std::string effectId, uint32_t value, bool dryRun);
-        bool SpawnEnemy(std::string effectId);
-        void RemoveEffect(std::string effectId);
+        void ListenToServer();
+        void ProcessActiveEffects();
+
+        void EmitMessage(TCPsocket socket, uint32_t eventId, long timeRemaining, EffectResult status);
+        Effect* ParseMessage(char payload[512]);
+        EffectResult ExecuteEffect(Effect* effect);
+        EffectResult CanApplyEffect(Effect *effect);
+        EffectResult TranslateGiEnum(GameInteractionEffectQueryResult giResult);
 
     public:
         static CrowdControl* Instance;
-        void InitCrowdControl();
+        void Init();
+        void Shutdown();
+        void Enable();
+        void Disable();
 };
 #endif
 #endif

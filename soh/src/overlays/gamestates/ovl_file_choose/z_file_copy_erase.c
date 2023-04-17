@@ -54,6 +54,8 @@ void FileChoose_SetupCopySource(GameState* thisx) {
     }
 }
 
+uint16_t lastCopyEraseButtonIndex;
+
 /**
  * Allow the player to select a file to copy or exit back to the main menu.
  * Update function for `CM_SELECT_COPY_SOURCE`
@@ -61,7 +63,7 @@ void FileChoose_SetupCopySource(GameState* thisx) {
 void FileChoose_SelectCopySource(GameState* thisx) {
     FileChooseContext* this = (FileChooseContext*)thisx;
     Input* input = &this->state.input[0];
-    bool dpad = CVar_GetS32("gDpadText", 0);
+    bool dpad = CVarGetInteger("gDpadText", 0);
 
     if (((this->buttonIndex == FS_BTN_COPY_QUIT) && CHECK_BTN_ANY(input->press.button, BTN_A | BTN_START)) ||
         CHECK_BTN_ALL(input->press.button, BTN_B)) {
@@ -109,6 +111,11 @@ void FileChoose_SelectCopySource(GameState* thisx) {
                 this->warningLabel = FS_WARNING_NONE;
             }
         }
+    }
+    
+    if (lastCopyEraseButtonIndex != this->buttonIndex) {
+        GameInteractor_ExecuteOnUpdateFileCopySelection(this->buttonIndex);
+        lastCopyEraseButtonIndex = this->buttonIndex;
     }
 }
 
@@ -173,7 +180,7 @@ void FileChoose_SetupCopyDest2(GameState* thisx) {
 void FileChoose_SelectCopyDest(GameState* thisx) {
     FileChooseContext* this = (FileChooseContext*)thisx;
     Input* input = &this->state.input[0];
-    bool dpad = CVar_GetS32("gDpadText", 0);
+    bool dpad = CVarGetInteger("gDpadText", 0);
 
     if (((this->buttonIndex == FS_BTN_COPY_QUIT) && CHECK_BTN_ANY(input->press.button, BTN_A | BTN_START)) ||
         CHECK_BTN_ALL(input->press.button, BTN_B)) {
@@ -357,7 +364,7 @@ void FileChoose_CopyConfirm(GameState* thisx) {
     FileChooseContext* this = (FileChooseContext*)thisx;
     Input* input = &this->state.input[0];
     u16 dayTime;
-    bool dpad = CVar_GetS32("gDpadText", 0);
+    bool dpad = CVarGetInteger("gDpadText", 0);
 
     if (((this->buttonIndex != FS_BTN_CONFIRM_YES) && CHECK_BTN_ANY(input->press.button, BTN_A | BTN_START)) ||
         CHECK_BTN_ALL(input->press.button, BTN_B)) {
@@ -378,6 +385,11 @@ void FileChoose_CopyConfirm(GameState* thisx) {
     } else if ((ABS(this->stickRelY) >= 30) || (dpad && CHECK_BTN_ANY(input->press.button, BTN_DDOWN | BTN_DUP))) {
         Audio_PlaySoundGeneral(NA_SE_SY_FSEL_CURSOR, &D_801333D4, 4, &D_801333E0, &D_801333E0, &D_801333E8);
         this->buttonIndex ^= 1;
+    }
+    
+    if (lastCopyEraseButtonIndex != this->buttonIndex) {
+        GameInteractor_ExecuteOnUpdateFileCopyConfirmationSelection(this->buttonIndex);
+        lastCopyEraseButtonIndex = this->buttonIndex;
     }
 }
 
@@ -675,7 +687,7 @@ void FileChoose_SetupEraseSelect(GameState* thisx) {
 void FileChoose_EraseSelect(GameState* thisx) {
     FileChooseContext* this = (FileChooseContext*)thisx;
     Input* input = &this->state.input[0];
-    bool dpad = CVar_GetS32("gDpadText", 0);
+    bool dpad = CVarGetInteger("gDpadText", 0);
 
     if (((this->buttonIndex == FS_BTN_COPY_QUIT) && CHECK_BTN_ANY(input->press.button, BTN_A | BTN_START)) ||
         CHECK_BTN_ALL(input->press.button, BTN_B)) {
@@ -723,6 +735,11 @@ void FileChoose_EraseSelect(GameState* thisx) {
         } else {
             this->warningLabel = FS_WARNING_NONE;
         }
+    }
+    
+    if (lastCopyEraseButtonIndex != this->buttonIndex) {
+        GameInteractor_ExecuteOnUpdateFileEraseSelection(this->buttonIndex);
+        lastCopyEraseButtonIndex = this->buttonIndex;
     }
 }
 
@@ -812,7 +829,7 @@ void FileChoose_SetupEraseConfirm2(GameState* thisx) {
 void FileChoose_EraseConfirm(GameState* thisx) {
     FileChooseContext* this = (FileChooseContext*)thisx;
     Input* input = &this->state.input[0];
-    bool dpad = CVar_GetS32("gDpadText", 0);
+    bool dpad = CVarGetInteger("gDpadText", 0);
 
     if (((this->buttonIndex != FS_BTN_CONFIRM_YES) && CHECK_BTN_ANY(input->press.button, BTN_A | BTN_START)) ||
         CHECK_BTN_ALL(input->press.button, BTN_B)) {
@@ -832,6 +849,11 @@ void FileChoose_EraseConfirm(GameState* thisx) {
     } else if ((ABS(this->stickRelY) >= 30) || (dpad && CHECK_BTN_ANY(input->press.button, BTN_DDOWN | BTN_DUP))) {
         Audio_PlaySoundGeneral(NA_SE_SY_FSEL_CURSOR, &D_801333D4, 4, &D_801333E0, &D_801333E0, &D_801333E8);
         this->buttonIndex ^= 1;
+    }
+    
+    if (lastCopyEraseButtonIndex != this->buttonIndex) {
+        GameInteractor_ExecuteOnUpdateFileEraseConfirmationSelection(this->buttonIndex);
+        lastCopyEraseButtonIndex = this->buttonIndex;
     }
 }
 

@@ -22,6 +22,9 @@ You can also find the v142 toolset by searching through the individual component
 While you're there, you can also install Python 3 and Git if needed.
 
 1. Clone the Ship of Harkinian repository
+
+_Note: Be sure to either clone with the ``--recursive`` flag or do ``git submodule init`` after cloning to pull in the libultraship submodule!_
+
 2. Place one or more [compatible](#compatible-roms) roms in the `OTRExporter` directory with namings of your choice
 
 _Note: Instructions assume using powershell_
@@ -42,6 +45,9 @@ cd Shipwright
 
 # If you need to clean the project you can run
 & 'C:\Program Files\CMake\bin\cmake.exe' --build .\build\x64 --target clean
+
+# If you need to regenerate the asset headers to check them into source
+& 'C:\Program Files\CMake\bin\cmake.exe' --build .\build\x64 --target ExtractAssetHeaders
 ```
 
 ### Developing SoH
@@ -85,10 +91,12 @@ _Note: If you're using Visual Studio Code, the [cpack plugin](https://marketplac
 # Clone the repo
 git clone https://github.com/HarbourMasters/Shipwright.git
 cd Shipwright
+# Clone the submodule libultraship
+git submodule update --init
 # Copy the baserom to the OTRExporter folder
 cp <path to your ROM> OTRExporter
 # Generate Ninja project
-cmake -H. -Bbuild-cmake -GNinja # -DCMAKE_BUILD_TYPE:STRING=Release (if you're packaging)
+cmake -H. -Bbuild-cmake -GNinja # -DCMAKE_BUILD_TYPE:STRING=Release (if you're packaging) -DPython3_EXECUTABLE=$(which python3) (if you are using non-standard Python installations such as PyEnv)
 # Extract assets & generate OTR (run this anytime you need to regenerate OTR)
 cmake --build build-cmake --target ExtractAssets
 # Compile the project
@@ -99,6 +107,9 @@ cmake --build build-cmake # --config Release (if you're packaging)
 
 # If you need to clean the project you can run
 cmake --build build-cmake --target clean
+
+# If you need to regenerate the asset headers to check them into source
+cmake --build build-cmake --target ExtractAssetHeaders
 ```
 
 ### Generating a distributable
@@ -123,6 +134,8 @@ _Note: If you're using Visual Studio Code, the [cpack plugin](https://marketplac
 # Clone the repo
 git clone https://github.com/HarbourMasters/Shipwright.git
 cd ShipWright
+# Clone the submodule libultraship
+git submodule update --init
 # Copy the baserom to the OTRExporter folder
 cp <path to your ROM> OTRExporter
 # Generate Ninja project
@@ -141,6 +154,9 @@ cp build-cmake/soh/oot.otr ~/Library/Application\ Support/com.shipofharkinian.so
 
 # If you need to clean the project you can run
 cmake --build build-cmake --target clean
+
+# If you need to regenerate the asset headers to check them into source
+cmake --build build-cmake --target ExtractAssetHeaders
 ```
 
 ### Generating a distributable
@@ -232,3 +248,15 @@ Use the `extract_assets.py` script file to run the exporter using any of the fol
 4) In a terminal run `python3 extract_assets.py <path_to_rom>`
 
 If the script finds multiple roms the user is prompted which to use. Selection is done using the number keys and then pressing the carriage return key.
+
+## Getting CI to work on your fork
+
+The CI works via [Github Actions](https://github.com/features/actions) where we mostly make use of machines hosted by Github; except for the very first step of the CI process called "Extract assets". This steps extracts assets from the game file and generates an "assets" folder in `soh/`.
+
+To get this step working on your fork, you'll need to add a machine to your own repository as a self-hosted runner via "Settings > Actions > Runners" in your repository settings. Make sure to add the 'asset-builder' tag to your newly added runner to assign it to run this step. To setup your runner as a service read the docs [here](https://docs.github.com/en/actions/hosting-your-own-runners/configuring-the-self-hosted-runner-application-as-a-service?platform=linux).
+
+### Runner on Windows
+You'll have to enable the ability to run unsigned scripts through PowerShell. To do this, open Powershell as administrator and run `set-executionpolicy remotesigned`. Most dependencies get installed as part of the CI process. You will also need to seperately install 7z and add it to the PATH so `7z` can be run as a command. [Chocolatey](https://chocolatey.org/) or other package managers can be used to install it easily.
+
+### Runner on UNIX systems
+If you're on macOS or Linux take a look at `macports-deps.txt` or `apt-deps.txt` to see the dependencies expected to be on your machine.

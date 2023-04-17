@@ -1,6 +1,7 @@
 #include <string.h>
 #include "global.h"
 #include "vt.h"
+#include "soh/Enhancements/game-interactor/GameInteractor.h"
 
 SpeedMeter D_801664D0;
 struct_801664F0 D_801664F0;
@@ -157,7 +158,7 @@ void GameState_Draw(GameState* gameState, GraphicsContext* gfxCtx) {
     }
 
     sLastButtonPressed = gameState->input[0].press.button | gameState->input[0].cur.button;
-    if (R_DISABLE_INPUT_DISPLAY == 0 && CVar_GetS32("gDebugEnabled", 0)) {
+    if (R_DISABLE_INPUT_DISPLAY == 0 && CVarGetInteger("gDebugEnabled", 0)) {
         GameState_DrawInputDisplay(sLastButtonPressed, &newDList);
     }
 
@@ -324,112 +325,9 @@ void GameState_Update(GameState* gameState) {
         func_800C49F4(gfxCtx);
     }
 
-    // -----------------------
-    // Cheats hooks
-    // -----------------------
+    gSaveContext.language = CVarGetInteger("gLanguages", LANGUAGE_ENG);
 
-    // Inf Money
-    if (CVar_GetS32("gInfiniteMoney", 0) != 0) {
-        if (gSaveContext.rupees < CUR_CAPACITY(UPG_WALLET)) {
-            gSaveContext.rupees = CUR_CAPACITY(UPG_WALLET);
-        }
-    }
-
-    // Inf Health
-    if (CVar_GetS32("gInfiniteHealth", 0) != 0) {
-        if (gSaveContext.health < gSaveContext.healthCapacity) {
-            gSaveContext.health = gSaveContext.healthCapacity;
-        }
-    }
-
-    // Inf Ammo
-    if (CVar_GetS32("gInfiniteAmmo", 0) != 0) {
-        // Deku Sticks
-        if (AMMO(ITEM_STICK) < CUR_CAPACITY(UPG_STICKS)) {
-            AMMO(ITEM_STICK) = CUR_CAPACITY(UPG_STICKS);
-        }
-
-        // Deku Nuts
-        if (AMMO(ITEM_NUT) < CUR_CAPACITY(UPG_NUTS)) {
-            AMMO(ITEM_NUT) = CUR_CAPACITY(UPG_NUTS);
-        }
-
-        // Bombs
-        if (AMMO(ITEM_BOMB) < CUR_CAPACITY(UPG_BOMB_BAG)) {
-            AMMO(ITEM_BOMB) = CUR_CAPACITY(UPG_BOMB_BAG);
-        }
-
-        // Fairy Bow (Ammo)
-        if (AMMO(ITEM_BOW) < CUR_CAPACITY(UPG_QUIVER)) {
-            AMMO(ITEM_BOW) = CUR_CAPACITY(UPG_QUIVER);
-        }
-
-        // Fairy Slingshot (Ammo)
-        if (AMMO(ITEM_SLINGSHOT) < CUR_CAPACITY(UPG_BULLET_BAG)) {
-            AMMO(ITEM_SLINGSHOT) = CUR_CAPACITY(UPG_BULLET_BAG);
-        }
-
-        // Bombchus (max: 50, no upgrades)
-        if (INV_CONTENT(ITEM_BOMBCHU) == ITEM_BOMBCHU && AMMO(ITEM_BOMBCHU) < 50) {
-            AMMO(ITEM_BOMBCHU) = 50;
-        }
-    }
-
-    // Inf Magic
-    if (CVar_GetS32("gInfiniteMagic", 0) != 0) {
-        if (gSaveContext.magicAcquired && gSaveContext.magic != (gSaveContext.doubleMagic + 1) * 0x30) {
-            gSaveContext.magic = (gSaveContext.doubleMagic + 1) * 0x30;
-        }
-    }
-
-    // Inf Nayru's Love Timer
-    if (CVar_GetS32("gInfiniteNayru", 0) != 0) {
-        gSaveContext.nayrusLoveTimer = 0x44B;
-    }
-
-    // Moon Jump On L
-    if (CVar_GetS32("gMoonJumpOnL", 0) != 0) {
-        if (gGlobalCtx) {
-            Player* player = GET_PLAYER(gGlobalCtx);
-
-            if (CHECK_BTN_ANY(gGlobalCtx->state.input[0].cur.button, BTN_L)) {
-                player->actor.velocity.y = 6.34375f;
-            }
-        }
-    }
-
-    // Permanent infinite sword glitch (ISG)
-    if (CVar_GetS32("gEzISG", 0) != 0) {
-        if (gGlobalCtx) {
-            Player* player = GET_PLAYER(gGlobalCtx);
-            player->swordState = 1;
-        }
-    }
-
-    // Unrestricted Items
-    if (CVar_GetS32("gNoRestrictItems", 0) != 0) {
-        if (gGlobalCtx) {
-            u8 sunsBackup = gGlobalCtx->interfaceCtx.restrictions.sunsSong;
-            memset(&gGlobalCtx->interfaceCtx.restrictions, 0, sizeof(gGlobalCtx->interfaceCtx.restrictions));
-            gGlobalCtx->interfaceCtx.restrictions.sunsSong = sunsBackup;
-        }
-    }
-
-    // Freeze Time
-    if (CVar_GetS32("gFreezeTime", 0) != 0) {
-        if (CVar_GetS32("gPrevTime", -1) == -1) {
-            CVar_SetS32("gPrevTime", gSaveContext.dayTime);
-        }
-
-        int32_t prevTime = CVar_GetS32("gPrevTime", gSaveContext.dayTime);
-        gSaveContext.dayTime = prevTime;
-    } else {
-        CVar_SetS32("gPrevTime", -1);
-    }
-
-    //since our CVar is same value and properly default to 0 there is not problems doing this in single line.
-    gSaveContext.language = CVar_GetS32("gLanguages", 0);
-
+    GameInteractor_ExecuteOnGameFrameUpdate();
     gameState->frames++;
 }
 
@@ -461,7 +359,7 @@ void GameState_Realloc(GameState* gameState, size_t size) {
     osSyncPrintf("ハイラル一時解放!!\n"); // "Hyrule temporarily released!!"
     SystemArena_GetSizes(&systemMaxFree, &systemFree, &systemAlloc);
     if ((systemMaxFree - 0x10) < size) {
-        osSyncPrintf("%c", 7);
+        osSyncPrintf("%c", BEL);
         osSyncPrintf(VT_FGCOL(RED));
 
         // "Not enough memory. Change the hyral size to the largest possible value"

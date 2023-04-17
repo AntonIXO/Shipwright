@@ -1,13 +1,13 @@
 #ifndef Z_EN_RU2_H
 #define Z_EN_RU2_H
 
-#include "ultra64.h"
+#include <libultraship/libultra.h>
 #include "global.h"
 
 struct EnRu2;
 
-typedef void (*EnRu2ActionFunc)(struct EnRu2*, GlobalContext*);
-typedef void (*EnRu2DrawFunc)(struct EnRu2*, GlobalContext*);
+typedef void (*EnRu2ActionFunc)(struct EnRu2*, PlayState*);
+typedef void (*EnRu2DrawFunc)(struct EnRu2*, PlayState*);
 
 typedef struct EnRu2 {
     /* 0x0000 */ Actor actor;

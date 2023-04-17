@@ -1,19 +1,22 @@
 #include "debugconsole.h"
-#include <libultraship/ImGuiImpl.h>
-#include <libultraship/Utils.h>
+#include <ImGuiImpl.h>
+#include <Utils.h>
 #include "savestates.h"
-#include <libultraship/Console.h>
+#include <Console.h>
 
 #include <vector>
 #include <string>
 #include "soh/OTRGlobals.h"
-
+#include <soh/Enhancements/item-tables/ItemTableManager.h>
+#include "soh/Enhancements/game-interactor/GameInteractor.h"
+#include "soh/Enhancements/cosmetics/CosmeticsEditor.h"
+#include "soh/Enhancements/audio/AudioEditor.h"
 
 #define Path _Path
 #define PATH_HACK
 #include <Utils/StringHelper.h>
 
-#include <libultraship/Window.h>
+#include <Window.h>
 #include <ImGui/imgui_internal.h>
 #undef PATH_HACK
 #undef Path
@@ -23,27 +26,12 @@ extern "C" {
 #include "variables.h"
 #include "functions.h"
 #include "macros.h"
-extern GlobalContext* gGlobalCtx;
+extern PlayState* gPlayState;
 }
 
-#include <libultraship/Cvar.h>
-#include "overlays/actors/ovl_En_Niw/z_en_niw.h"
+#include <libultraship/bridge.h>
 
 #define CMD_REGISTER SohImGui::GetConsole()->AddCommand
-
-uint32_t chaosEffectNoUI;
-uint32_t chaosEffectGiantLink;
-uint32_t chaosEffectMinishLink;
-uint32_t chaosEffectPaperLink;
-uint32_t chaosEffectResetLinkScale;
-uint32_t chaosEffectInvisibleLink;
-uint32_t chaosEffectOneHitKO;
-uint32_t chaosEffectPacifistMode;
-int32_t chaosEffectDefenseModifier;
-uint32_t chaosEffectNoZ;
-uint32_t chaosEffectReverseControls;
-uint32_t chaosEffectGravityLevel = GRAVITY_LEVEL_NORMAL;
-int32_t chaosEffectSpeedModifier;
 
 static bool ActorSpawnHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
     if ((args.size() != 9) && (args.size() != 3) && (args.size() != 6)) {
@@ -51,12 +39,12 @@ static bool ActorSpawnHandler(std::shared_ptr<Ship::Console> Console, const std:
         return CMD_FAILED;
     }
 
-    if (gGlobalCtx == nullptr) {
-        SohImGui::GetConsole()->SendErrorMessage("GlobalCtx == nullptr");
+    if (gPlayState == nullptr) {
+        SohImGui::GetConsole()->SendErrorMessage("PlayState == nullptr");
         return CMD_FAILED;
     }
 
-    Player* player = GET_PLAYER(gGlobalCtx);
+    Player* player = GET_PLAYER(gPlayState);
     PosRot spawnPoint;
     const s16 actorId = std::stoi(args[1]);
     const s16 params = std::stoi(args[2]);
@@ -86,38 +74,32 @@ static bool ActorSpawnHandler(std::shared_ptr<Ship::Console> Console, const std:
             }
     }
 
-    if (Actor_Spawn(&gGlobalCtx->actorCtx, gGlobalCtx, actorId, spawnPoint.pos.x, spawnPoint.pos.y, spawnPoint.pos.z,
-                    spawnPoint.rot.x, spawnPoint.rot.y, spawnPoint.rot.z, params) == NULL) {
+    if (Actor_Spawn(&gPlayState->actorCtx, gPlayState, actorId, spawnPoint.pos.x, spawnPoint.pos.y, spawnPoint.pos.z,
+                    spawnPoint.rot.x, spawnPoint.rot.y, spawnPoint.rot.z, params, 0) == NULL) {
         SohImGui::GetConsole()->SendErrorMessage("Failed to spawn actor. Actor_Spawn returned NULL");
         return CMD_FAILED;
     }
     return CMD_SUCCESS;
 }
 
-static bool GiveDekuShieldHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>&) {
-    // Give Deku Shield to the player, and automatically equip it when they're child and have no shield currently equiped.
-    Player* player = GET_PLAYER(gGlobalCtx);
-    Item_Give(gGlobalCtx, ITEM_SHIELD_DEKU);
-    if (LINK_IS_CHILD && player->currentShield == PLAYER_SHIELD_NONE) {
-        player->currentShield = PLAYER_SHIELD_DEKU;
-        Inventory_ChangeEquipment(EQUIP_SHIELD, PLAYER_SHIELD_DEKU);
-    }
-    SohImGui::GetConsole()->SendInfoMessage("[SOH] Gave Deku Shield");
-    return CMD_SUCCESS;
-}
-
 static bool KillPlayerHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>&) {
-    gSaveContext.health = 0;
-    SohImGui::GetConsole()->SendInfoMessage("[SOH] You've met with a terrible fate, haven't you?");
-    return CMD_SUCCESS;
+    GameInteractionEffectBase* effect = new GameInteractionEffect::SetPlayerHealth();
+    effect->parameters[0] = 0;
+    GameInteractionEffectQueryResult result = GameInteractor::ApplyEffect(effect);
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] You've met with a terrible fate, haven't you?");
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not kill player.");
+        return CMD_FAILED;
+    }
 }
 
 static bool SetPlayerHealthHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    if (args.size() != 2) {
+    if (args.size() < 2) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
         return CMD_FAILED;
     }
-
     int health;
 
     try {
@@ -129,13 +111,19 @@ static bool SetPlayerHealthHandler(std::shared_ptr<Ship::Console> Console, const
 
     if (health < 0) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Health value must be a positive integer");
-        return CMD_SUCCESS;
+        return CMD_FAILED;
     }
 
-    gSaveContext.health = health * 0x10;
-
-    SohImGui::GetConsole()->SendInfoMessage("[SOH] Player health updated to %d", health);
-    return CMD_SUCCESS;
+    GameInteractionEffectBase* effect = new GameInteractionEffect::SetPlayerHealth();
+    effect->parameters[0] = health;
+    GameInteractionEffectQueryResult result = GameInteractor::ApplyEffect(effect);
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Player health updated to %d", health);
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not set player health.");
+        return CMD_FAILED;
+    }
 }
 
 static bool LoadSceneHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>&) {
@@ -165,19 +153,19 @@ static bool RupeeHandler(std::shared_ptr<Ship::Console> Console, const std::vect
         return CMD_FAILED;
     }
 
-    gSaveContext.rupees = rupeeAmount;
+   gSaveContext.rupees = rupeeAmount;
 
     SohImGui::GetConsole()->SendInfoMessage("Set rupee count to %u", rupeeAmount);
     return CMD_SUCCESS;
 }
 
 static bool SetPosHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string> args) {
-    if (gGlobalCtx == nullptr) {
-        SohImGui::GetConsole()->SendErrorMessage("GlobalCtx == nullptr");
+    if (gPlayState == nullptr) {
+        SohImGui::GetConsole()->SendErrorMessage("PlayState == nullptr");
         return CMD_FAILED;
     }
 
-    Player* player = GET_PLAYER(gGlobalCtx);
+    Player* player = GET_PLAYER(gPlayState);
 
     if (args.size() == 1) {
         SohImGui::GetConsole()->SendInfoMessage("Player position is [ %.2f, %.2f, %.2f ]", player->actor.world.pos.x,
@@ -199,71 +187,112 @@ static bool SetPosHandler(std::shared_ptr<Ship::Console> Console, const std::vec
 }
 
 static bool ResetHandler(std::shared_ptr<Ship::Console> Console, std::vector<std::string> args) {
-    if (gGlobalCtx == nullptr) {
-        SohImGui::GetConsole()->SendErrorMessage("GlobalCtx == nullptr");
+    if (gPlayState == nullptr) {
+        SohImGui::GetConsole()->SendErrorMessage("PlayState == nullptr");
         return CMD_FAILED;
     }
 
-    SET_NEXT_GAMESTATE(&gGlobalCtx->state, TitleSetup_Init, GameState);
-    gGlobalCtx->state.running = false;
+    SET_NEXT_GAMESTATE(&gPlayState->state, TitleSetup_Init, GameState);
+    gPlayState->state.running = false;
+    GameInteractor::Instance->ExecuteHooks<GameInteractor::OnExitGame>(gSaveContext.fileNum);
     return CMD_SUCCESS;
 }
 
-const static std::map<std::string, uint16_t> ammoItems{
-    { "sticks", ITEM_STICK }, { "deku_sticks", ITEM_STICK },
-    { "nuts", ITEM_NUT },     { "deku_nuts", ITEM_NUT },
-    { "bombs", ITEM_BOMB },      { "arrows", ITEM_BOW },
-    { "bombchus", ITEM_BOMBCHU }, { "chus", ITEM_BOMBCHU },
-    { "beans", ITEM_BEAN },
-    { "seeds", ITEM_SLINGSHOT }, { "deku_seeds", ITEM_SLINGSHOT },
-    { "magic_beans", ITEM_BEAN },
+const static std::map<std::string, uint16_t> ammoItems{ 
+    { "sticks", ITEM_STICK }, { "nuts", ITEM_NUT },
+    { "bombs", ITEM_BOMB },   { "seeds", ITEM_SLINGSHOT },
+    { "arrows", ITEM_BOW },   { "bombchus", ITEM_BOMBCHU },
+    { "beans", ITEM_BEAN }
 };
 
-static bool AmmoHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    if (args.size() != 3) {
+static bool AddAmmoHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
+    if (args.size() < 3) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
         return CMD_FAILED;
     }
-
-    int count;
+    int amount;
 
     try {
-        count = std::stoi(args[2]);
+        amount = std::stoi(args[2]);
     } catch (std::invalid_argument const& ex) {
         SohImGui::GetConsole()->SendErrorMessage("Ammo count must be an integer");
         return CMD_FAILED;
     }
 
-    if (count < 0) {
+    if (amount < 0) {
         SohImGui::GetConsole()->SendErrorMessage("Ammo count must be positive");
         return CMD_FAILED;
     }
 
     const auto& it = ammoItems.find(args[1]);
-
     if (it == ammoItems.end()) {
-        SohImGui::GetConsole()->SendErrorMessage("Invalid item passed");
+        SohImGui::GetConsole()->SendErrorMessage("Invalid ammo type. Options are 'sticks', 'nuts', 'bombs', 'seeds', 'arrows', 'bombchus' and 'beans'");
         return CMD_FAILED;
     }
 
-    // I dont think you can do OOB with just this
-    AMMO(it->second) = count;
+    GameInteractionEffectBase* effect = new GameInteractionEffect::AddOrTakeAmmo();
+    effect->parameters[0] = amount;
+    effect->parameters[1] = it->second;
+    GameInteractionEffectQueryResult result = GameInteractor::ApplyEffect(effect);
 
-    //To use a change by uncomment this
-    //Inventory_ChangeAmmo(it->second, count);
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Added ammo.");
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not add ammo.");
+        return CMD_FAILED;
+    }
+}
+
+static bool TakeAmmoHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
+    if (args.size() < 3) {
+        SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
+        return CMD_FAILED;
+    }
+    int amount;
+
+    try {
+        amount = std::stoi(args[2]);
+    } catch (std::invalid_argument const& ex) {
+        SohImGui::GetConsole()->SendErrorMessage("Ammo count must be an integer");
+        return CMD_FAILED;
+    }
+
+    if (amount < 0) {
+        SohImGui::GetConsole()->SendErrorMessage("Ammo count must be positive");
+        return CMD_FAILED;
+    }
+
+    const auto& it = ammoItems.find(args[1]);
+    if (it == ammoItems.end()) {
+        SohImGui::GetConsole()->SendErrorMessage(
+            "Invalid ammo type. Options are 'sticks', 'nuts', 'bombs', 'seeds', 'arrows', 'bombchus' and 'beans'");
+        return CMD_FAILED;
+    }
+
+    GameInteractionEffectBase* effect = new GameInteractionEffect::AddOrTakeAmmo();
+    effect->parameters[0] = -amount;
+    effect->parameters[1] = it->second;
+    GameInteractionEffectQueryResult result = GameInteractor::ApplyEffect(effect);
+
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Took ammo.");
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not take ammo.");
+        return CMD_FAILED;
+    }
 }
 
 const static std::map<std::string, uint16_t> bottleItems{
-    { "green_potion", ITEM_POTION_GREEN },
-    { "red_potion", ITEM_POTION_RED },
-    { "blue_potion", ITEM_POTION_BLUE },
-    { "milk", ITEM_MILK },    { "half_milk", ITEM_MILK_HALF },           { "fairy", ITEM_FAIRY },
-    { "bugs", ITEM_BUG }, { "fish", ITEM_FISH },         { "poe", ITEM_POE },
-    { "big_poe", ITEM_BIG_POE },  { "blue_fire", ITEM_BLUE_FIRE }, { "rutos_letter", ITEM_LETTER_RUTO },
+    { "green_potion", ITEM_POTION_GREEN }, { "red_potion", ITEM_POTION_RED }, { "blue_potion", ITEM_POTION_BLUE },
+    { "milk", ITEM_MILK },                 { "half_milk", ITEM_MILK_HALF },   { "fairy", ITEM_FAIRY },
+    { "bugs", ITEM_BUG },                  { "fish", ITEM_FISH },             { "poe", ITEM_POE },
+    { "big_poe", ITEM_BIG_POE },           { "blue_fire", ITEM_BLUE_FIRE },   { "rutos_letter", ITEM_LETTER_RUTO },
 };
 
 static bool BottleHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    if (args.size() != 3) {
+    if (args.size() < 3) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
         return CMD_FAILED;
     }
@@ -295,7 +324,7 @@ static bool BottleHandler(std::shared_ptr<Ship::Console> Console, const std::vec
 }
 
 static bool BHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    if (args.size() != 2) {
+    if (args.size() < 2) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
         return CMD_FAILED;
     }
@@ -305,7 +334,7 @@ static bool BHandler(std::shared_ptr<Ship::Console> Console, const std::vector<s
 }
 
 static bool ItemHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    if (args.size() != 3) {
+    if (args.size() < 3) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
         return CMD_FAILED;
     }
@@ -315,8 +344,29 @@ static bool ItemHandler(std::shared_ptr<Ship::Console> Console, const std::vecto
     return CMD_SUCCESS;
 }
 
+static bool GiveItemHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string> args) {
+    if (args.size() < 3) {
+        SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
+        return CMD_FAILED;
+    }
+    GetItemEntry getItemEntry = GET_ITEM_NONE;
+
+    if (args[1].compare("vanilla") == 0) {
+        getItemEntry = ItemTableManager::Instance->RetrieveItemEntry(MOD_NONE, std::stoi(args[2]));
+    } else if (args[1].compare("randomizer") == 0) {
+        getItemEntry = ItemTableManager::Instance->RetrieveItemEntry(MOD_RANDOMIZER, std::stoi(args[2]));
+    } else {
+        SohImGui::GetConsole()->SendErrorMessage("[SOH] Invalid argument passed, must be 'vanilla' or 'randomizer'");
+        return CMD_FAILED;
+    }
+
+    GiveItemEntryWithoutActor(gPlayState, getItemEntry);
+
+    return CMD_SUCCESS;
+}
+
 static bool EntranceHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    if (args.size() != 2) {
+    if (args.size() < 2) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
         return CMD_FAILED;
     }
@@ -330,53 +380,91 @@ static bool EntranceHandler(std::shared_ptr<Ship::Console> Console, const std::v
         return CMD_FAILED;
     }
 
-    gGlobalCtx->nextEntranceIndex = entrance;
-    gGlobalCtx->sceneLoadFlag = 0x14;
-    gGlobalCtx->fadeTransition = 11;
-    gSaveContext.nextTransition = 11;
+    gPlayState->nextEntranceIndex = entrance;
+    gPlayState->sceneLoadFlag = 0x14;
+    gPlayState->fadeTransition = 11;
+    gSaveContext.nextTransitionType = 11;
 }
 
 static bool VoidHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    if (gGlobalCtx != nullptr) {
-            gSaveContext.respawn[RESPAWN_MODE_DOWN].tempSwchFlags = gGlobalCtx->actorCtx.flags.tempSwch;
-            gSaveContext.respawn[RESPAWN_MODE_DOWN].tempCollectFlags = gGlobalCtx->actorCtx.flags.tempCollect;
+    if (gPlayState != nullptr) {
+            gSaveContext.respawn[RESPAWN_MODE_DOWN].tempSwchFlags = gPlayState->actorCtx.flags.tempSwch;
+            gSaveContext.respawn[RESPAWN_MODE_DOWN].tempCollectFlags = gPlayState->actorCtx.flags.tempCollect;
             gSaveContext.respawnFlag = 1;
-            gGlobalCtx->sceneLoadFlag = 0x14;
-            gGlobalCtx->nextEntranceIndex = gSaveContext.respawn[RESPAWN_MODE_DOWN].entranceIndex;
-            gGlobalCtx->fadeTransition = 2;
-            gSaveContext.nextTransition = 2;
+            gPlayState->sceneLoadFlag = 0x14;
+            gPlayState->nextEntranceIndex = gSaveContext.respawn[RESPAWN_MODE_DOWN].entranceIndex;
+            gPlayState->fadeTransition = 2;
+            gSaveContext.nextTransitionType = 2;
     } else {
-        SohImGui::GetConsole()->SendErrorMessage("gGlobalCtx == nullptr");
+        SohImGui::GetConsole()->SendErrorMessage("gPlayState == nullptr");
         return CMD_FAILED;
     }
     return CMD_SUCCESS;
 }
 
 static bool ReloadHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    if (gGlobalCtx != nullptr) {
-        gGlobalCtx->nextEntranceIndex = gSaveContext.entranceIndex;
-        gGlobalCtx->sceneLoadFlag = 0x14;
-        gGlobalCtx->fadeTransition = 11;
-        gSaveContext.nextTransition = 11;
+    if (gPlayState != nullptr) {
+        gPlayState->nextEntranceIndex = gSaveContext.entranceIndex;
+        gPlayState->sceneLoadFlag = 0x14;
+        gPlayState->fadeTransition = 11;
+        gSaveContext.nextTransitionType = 11;
     } else {
-        SohImGui::GetConsole()->SendErrorMessage("gGlobalCtx == nullptr");
+        SohImGui::GetConsole()->SendErrorMessage("gPlayState == nullptr");
         return CMD_FAILED;
     }
     return CMD_SUCCESS;
 }
 
+const static std::map<std::string, uint16_t> fw_options {
+    { "clear", 0}, {"warp", 1}, {"backup", 2}
+};
+
 static bool FWHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    if (gGlobalCtx != nullptr) {
-        if (gSaveContext.respawn[RESPAWN_MODE_TOP].data > 0) {
-                gGlobalCtx->sceneLoadFlag = 0x14;
-                gGlobalCtx->nextEntranceIndex = gSaveContext.respawn[RESPAWN_MODE_TOP].entranceIndex;
-                gGlobalCtx->fadeTransition = 5;
-        } else {
-            SohImGui::GetConsole()->SendErrorMessage("Farore's wind not set!");
+    if (args.size() < 2) {
+        SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
+        return CMD_FAILED;
+    }
+
+    const auto& it = fw_options.find(args[1]);
+    if (it == fw_options.end()) {
+        SohImGui::GetConsole()->SendErrorMessage("[SOH] Invalid option. Options are 'clear', 'warp', 'backup'");
+        return CMD_FAILED;
+    }
+    
+    if (gPlayState != nullptr) {
+        FaroresWindData clear = {};
+        switch(it->second) {
+            case 0: //clear
+                gSaveContext.fw = clear;
+                SohImGui::GetConsole()->SendInfoMessage("[SOH] Farore's wind point cleared! Reload scene to take effect.");
+                return CMD_SUCCESS;
+                break;
+            case 1: //warp
+                if (gSaveContext.respawn[RESPAWN_MODE_TOP].data > 0) {
+                    gPlayState->sceneLoadFlag = 0x14;
+                    gPlayState->nextEntranceIndex = gSaveContext.respawn[RESPAWN_MODE_TOP].entranceIndex;
+                    gPlayState->fadeTransition = 5;
+                } else {
+                    SohImGui::GetConsole()->SendErrorMessage("Farore's wind not set!");
+                    return CMD_FAILED;
+                }
+                return CMD_SUCCESS;
+                break;
+            case 2: //backup
+                if (CVarGetInteger("gBetterFW", 0)) {
+                    gSaveContext.fw = gSaveContext.backupFW;
+                    gSaveContext.fw.set = 1;
+                    SohImGui::GetConsole()->SendInfoMessage("[SOH] Backup FW data copied! Reload scene to take effect.");
+                    return CMD_SUCCESS;
+                } else {
+                    SohImGui::GetConsole()->SendErrorMessage("Better Farore's Wind isn't turned on!");
+                    return CMD_FAILED;
+                }
+                break;
         }
     }
     else {
-        SohImGui::GetConsole()->SendErrorMessage("gGlobalCtx == nullptr");
+        SohImGui::GetConsole()->SendErrorMessage("gPlayState == nullptr");
         return CMD_FAILED;
     }
     
@@ -384,18 +472,18 @@ static bool FWHandler(std::shared_ptr<Ship::Console> Console, const std::vector<
 }
 
 static bool FileSelectHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    if (gGlobalCtx != nullptr) {
-        SET_NEXT_GAMESTATE(&gGlobalCtx->state, FileChoose_Init, FileChooseContext);
-        gGlobalCtx->state.running = 0;
+    if (gPlayState != nullptr) {
+        SET_NEXT_GAMESTATE(&gPlayState->state, FileChoose_Init, FileChooseContext);
+        gPlayState->state.running = 0;
     } else {
-        SohImGui::GetConsole()->SendErrorMessage("gGlobalCtx == nullptr");
+        SohImGui::GetConsole()->SendErrorMessage("gPlayState == nullptr");
         return CMD_FAILED;
     }
     return CMD_SUCCESS;
 }
 
 static bool QuitHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    gGlobalCtx->state.running = 0;
+    Ship::Window::GetInstance()->Close();
     return CMD_SUCCESS;
 }
 
@@ -435,11 +523,11 @@ static bool LoadStateHandler(std::shared_ptr<Ship::Console> Console, const std::
 }
 
 static bool StateSlotSelectHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    if (args.size() != 2) {
+    if (args.size() < 2) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
         return CMD_FAILED;
     }
-    int slot;
+    uint8_t slot;
 
     try {
         slot = std::stoi(args[1], nullptr, 10);
@@ -460,140 +548,246 @@ static bool StateSlotSelectHandler(std::shared_ptr<Ship::Console> Console, const
 }
 
 static bool InvisibleHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    if (args.size() != 2) {
+    if (args.size() < 2) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
         return CMD_FAILED;
     }
+    uint8_t state;
 
     try {
-        chaosEffectInvisibleLink = std::stoi(args[1], nullptr, 10) == 0 ? 0 : 1;
-        if (!chaosEffectInvisibleLink) {
-            Player* player = GET_PLAYER(gGlobalCtx);
-            player->actor.shape.shadowDraw = ActorShadow_DrawFeet;
-        }
-
-        return CMD_SUCCESS;
+        state = std::stoi(args[1], nullptr, 10) == 0 ? 0 : 1;
     } catch (std::invalid_argument const& ex) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Invisible value must be a number.");
+        return CMD_FAILED;
+    }
+
+    GameInteractionEffectBase* effect = new GameInteractionEffect::InvisibleLink();
+    GameInteractionEffectQueryResult result = 
+        state ? GameInteractor::ApplyEffect(effect) : GameInteractor::RemoveEffect(effect);
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Invisible Link %s", state ? "enabled" : "disabled");
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not %s Invisible Link.",
+                                                state ? "enable" : "disable");
         return CMD_FAILED;
     }
 }
 
 static bool GiantLinkHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    if (args.size() != 2) {
+    if (args.size() < 2) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
         return CMD_FAILED;
     }
+    uint8_t state;
 
     try {
-        chaosEffectGiantLink = std::stoi(args[1], nullptr, 10) == 0 ? 0 : 1;
-        if (chaosEffectGiantLink) {
-            chaosEffectPaperLink = 0;
-            chaosEffectMinishLink = 0;
-        } else {
-            chaosEffectResetLinkScale = 1;
-        }
-
-        return CMD_SUCCESS;
+        state = std::stoi(args[1], nullptr, 10) == 0 ? 0 : 1;
     } catch (std::invalid_argument const& ex) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Giant value must be a number.");
+        return CMD_FAILED;
+    }
+
+    GameInteractionEffectBase* effect = new GameInteractionEffect::ModifyLinkSize();
+    effect->parameters[0] = GI_LINK_SIZE_GIANT;
+    GameInteractionEffectQueryResult result =
+        state ? GameInteractor::ApplyEffect(effect) : GameInteractor::RemoveEffect(effect);
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Giant Link %s", state ? "enabled" : "disabled");
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not %s Giant Link.",
+                                                state ? "enable" : "disable");
         return CMD_FAILED;
     }
 }
 
 static bool MinishLinkHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    if (args.size() != 2) {
+    if (args.size() < 2) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
         return CMD_FAILED;
     }
+    uint8_t state;
 
     try {
-        chaosEffectMinishLink = std::stoi(args[1], nullptr, 10) == 0 ? 0 : 1;
-        if (chaosEffectMinishLink) {
-            chaosEffectPaperLink = 0;
-            chaosEffectGiantLink = 0;
-        } else {
-            chaosEffectResetLinkScale = 1;
-        }
-
-        return CMD_SUCCESS;
+        state = std::stoi(args[1], nullptr, 10) == 0 ? 0 : 1;
     } catch (std::invalid_argument const& ex) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Minish value must be a number.");
+        return CMD_FAILED;
+    }
+
+    GameInteractionEffectBase* effect = new GameInteractionEffect::ModifyLinkSize();
+    effect->parameters[0] = GI_LINK_SIZE_MINISH;
+    GameInteractionEffectQueryResult result =
+        state ? GameInteractor::ApplyEffect(effect) : GameInteractor::RemoveEffect(effect);
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Minish Link %s", state ? "enabled" : "disabled");
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not %s Minish Link.",
+                                                state ? "enable" : "disable");
         return CMD_FAILED;
     }
 }
 
 static bool AddHeartContainerHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    if (gSaveContext.healthCapacity >= 0x140)
+    if (args.size() < 2) {
+        SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
         return CMD_FAILED;
+    }
+    int hearts;
 
-    Health_GiveHearts(1);
-    return CMD_SUCCESS;
+    try {
+        hearts = std::stoi(args[1]);
+    } catch (std::invalid_argument const& ex) {
+        SohImGui::GetConsole()->SendErrorMessage("[SOH] Hearts value must be an integer.");
+        return CMD_FAILED;
+    }
+
+    if (hearts < 0) {
+        SohImGui::GetConsole()->SendErrorMessage("[SOH] Hearts value must be a positive integer");
+        return CMD_FAILED;
+    }
+
+    GameInteractionEffectBase* effect = new GameInteractionEffect::ModifyHeartContainers();
+    effect->parameters[0] = hearts;
+    GameInteractionEffectQueryResult result = GameInteractor::ApplyEffect(effect);
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Added %d heart containers", hearts);
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not add heart containers.");
+        return CMD_FAILED;
+    }
 }
 
 static bool RemoveHeartContainerHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    if ((gSaveContext.healthCapacity - 0x10) < 3)
+    if (args.size() < 2) {
+        SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
         return CMD_FAILED;
+    }
+    int hearts;
 
-    Health_RemoveHearts(1);
-    return CMD_SUCCESS;
+    try {
+        hearts = std::stoi(args[1]);
+    } catch (std::invalid_argument const& ex) {
+        SohImGui::GetConsole()->SendErrorMessage("[SOH] Hearts value must be an integer.");
+        return CMD_FAILED;
+    }
+
+    if (hearts < 0) {
+        SohImGui::GetConsole()->SendErrorMessage("[SOH] Hearts value must be a positive integer");
+        return CMD_FAILED;
+    }
+
+    GameInteractionEffectBase* effect = new GameInteractionEffect::ModifyHeartContainers();
+    effect->parameters[0] = -hearts;
+    GameInteractionEffectQueryResult result = GameInteractor::ApplyEffect(effect);
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Removed %d heart containers", hearts);
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not remove heart containers.");
+        return CMD_FAILED;
+    }
 }
 
 static bool GravityHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    if (args.size() != 2) {
+    if (args.size() < 2) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
         return CMD_FAILED;
     }
 
+    GameInteractionEffectBase* effect = new GameInteractionEffect::ModifyGravity();
+
     try {
-        chaosEffectGravityLevel = Ship::Math::clamp(std::stoi(args[1], nullptr, 10), GRAVITY_LEVEL_LIGHT, GRAVITY_LEVEL_HEAVY);
-        return CMD_SUCCESS;
+        effect->parameters[0] = Ship::Math::clamp(std::stoi(args[1], nullptr, 10), GI_GRAVITY_LEVEL_LIGHT, GI_GRAVITY_LEVEL_HEAVY);
     } catch (std::invalid_argument const& ex) {
-        SohImGui::GetConsole()->SendErrorMessage("[SOH] Minish value must be a number.");
+        SohImGui::GetConsole()->SendErrorMessage("[SOH] Gravity value must be a number.");
+        return CMD_FAILED;
+    }
+    
+    GameInteractionEffectQueryResult result = GameInteractor::ApplyEffect(effect);
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Updated gravity.");
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not update gravity.");
         return CMD_FAILED;
     }
 }
 
 static bool NoUIHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    if (args.size() != 2) {
+    if (args.size() < 2) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
         return CMD_FAILED;
     }
+    uint8_t state;
 
     try {
-        chaosEffectNoUI = std::stoi(args[1], nullptr, 10) == 0 ? 0 : 1;
-        return CMD_SUCCESS;
+        state = std::stoi(args[1], nullptr, 10) == 0 ? 0 : 1;
     } catch (std::invalid_argument const& ex) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] No UI value must be a number.");
+        return CMD_FAILED;
+    }
+    
+    GameInteractionEffectBase* effect = new GameInteractionEffect::NoUI();
+    GameInteractionEffectQueryResult result =
+        state ? GameInteractor::ApplyEffect(effect) : GameInteractor::RemoveEffect(effect);
+
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] No UI %s", state ? "enabled" : "disabled");
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not %s No UI.",
+                                                state ? "enable" : "disable");
         return CMD_FAILED;
     }
 }
 
 static bool FreezeHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    gSaveContext.pendingIceTrapCount++;
-    return CMD_SUCCESS;
+    GameInteractionEffectBase* effect = new GameInteractionEffect::FreezePlayer();
+    GameInteractionEffectQueryResult result = GameInteractor::ApplyEffect(effect);
+
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Player frozen");
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not freeze player.");
+        return CMD_FAILED;
+    }
 }
 
 static bool DefenseModifierHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    if (args.size() != 2) {
+    if (args.size() < 2) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
         return CMD_FAILED;
     }
+    GameInteractionEffectBase* effect = new GameInteractionEffect::ModifyDefenseModifier();
 
     try {
-        chaosEffectDefenseModifier = std::stoi(args[1], nullptr, 10);
-        return CMD_SUCCESS;
+        effect->parameters[0] = std::stoi(args[1], nullptr, 10);
     } catch (std::invalid_argument const& ex) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Defense modifier value must be a number.");
+        return CMD_FAILED;
+    }
+
+    GameInteractionEffectQueryResult result = GameInteractor::ApplyEffect(effect);
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Defense modifier set to %d", effect->parameters[0]);
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not set defense modifier.");
         return CMD_FAILED;
     }
 }
 
 static bool DamageHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    if (args.size() != 2) {
+    if (args.size() < 2) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
         return CMD_FAILED;
     }
+    GameInteractionEffectBase* effect = new GameInteractionEffect::ModifyHealth();
 
     try {
         int value = std::stoi(args[1], nullptr, 10);
@@ -602,24 +796,28 @@ static bool DamageHandler(std::shared_ptr<Ship::Console> Console, const std::vec
             return CMD_FAILED;
         }
 
-        Player* player = GET_PLAYER(gGlobalCtx);
-
-        Health_ChangeBy(gGlobalCtx, -value * 0x10);
-        func_80837C0C(gGlobalCtx, player, 0, 0, 0, 0, 0);
-        player->invincibilityTimer = 28;
-
-        return CMD_SUCCESS;
+        effect->parameters[0] = -value;
     } catch (std::invalid_argument const& ex) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Damage value must be a number.");
+        return CMD_FAILED;
+    }
+
+    GameInteractionEffectQueryResult result = GameInteractor::ApplyEffect(effect);
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Player damaged");
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not damage player.");
         return CMD_FAILED;
     }
 }
 
 static bool HealHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    if (args.size() != 2) {
+    if (args.size() < 2) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
         return CMD_FAILED;
     }
+    GameInteractionEffectBase* effect = new GameInteractionEffect::ModifyHealth();
 
     try {
         int value = std::stoi(args[1], nullptr, 10);
@@ -628,178 +826,262 @@ static bool HealHandler(std::shared_ptr<Ship::Console> Console, const std::vecto
             return CMD_FAILED;
         }
 
-        Health_ChangeBy(gGlobalCtx, value * 0x10);
-        return CMD_SUCCESS;
+        effect->parameters[0] = value;
     } catch (std::invalid_argument const& ex) {
-        SohImGui::GetConsole()->SendErrorMessage("[SOH] Heal value must be a number.");
+        SohImGui::GetConsole()->SendErrorMessage("[SOH] Damage value must be a number.");
+        return CMD_FAILED;
+    }
+
+    GameInteractionEffectQueryResult result = GameInteractor::ApplyEffect(effect);
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Player healed");
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not heal player.");
         return CMD_FAILED;
     }
 }
 
 static bool FillMagicHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    Magic_Fill(gGlobalCtx);
-    return CMD_SUCCESS;
+    GameInteractionEffectBase* effect = new GameInteractionEffect::FillMagic();
+    GameInteractionEffectQueryResult result = GameInteractor::ApplyEffect(effect);
+
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Magic filled");
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not fill magic.");
+        return CMD_FAILED;
+    }
 }
 
 static bool EmptyMagicHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    gSaveContext.magic = 0;
-    return CMD_SUCCESS;
+    GameInteractionEffectBase* effect = new GameInteractionEffect::EmptyMagic();
+    GameInteractionEffectQueryResult result = GameInteractor::ApplyEffect(effect);
+
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Magic emptied");
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not empty magic.");
+        return CMD_FAILED;
+    }
 }
 
 static bool NoZHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-     if (args.size() != 2) {
+     if (args.size() < 2) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
         return CMD_FAILED;
     }
+     uint8_t state;
 
     try {
-        chaosEffectNoZ = std::stoi(args[1], nullptr, 10) == 0 ? 0 : 1;
-        return CMD_SUCCESS;
+        state = std::stoi(args[1], nullptr, 10) == 0 ? 0 : 1;
     } catch (std::invalid_argument const& ex) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] NoZ value must be a number.");
+        return CMD_FAILED;
+    }
+
+    GameInteractionEffectBase* effect = new GameInteractionEffect::DisableZTargeting();
+    GameInteractionEffectQueryResult result =
+        state ? GameInteractor::ApplyEffect(effect) : GameInteractor::RemoveEffect(effect);
+
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] NoZ " + std::string(state ? "enabled" : "disabled"));
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not " +
+                                                std::string(state ? "enable" : "disable") + " NoZ.");
         return CMD_FAILED;
     }
 }
 
 static bool OneHitKOHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    if (args.size() != 2) {
+    if (args.size() < 2) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
         return CMD_FAILED;
     }
+    uint8_t state;
 
     try {
-        chaosEffectOneHitKO = std::stoi(args[1], nullptr, 10) == 0 ? 0 : 1;
-        return CMD_SUCCESS;
+        state = std::stoi(args[1], nullptr, 10) == 0 ? 0 : 1;
     } catch (std::invalid_argument const& ex) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] One-hit KO value must be a number.");
+        return CMD_FAILED;
+    }
+
+    GameInteractionEffectBase* effect = new GameInteractionEffect::OneHitKO();
+    GameInteractionEffectQueryResult result =
+        state ? GameInteractor::ApplyEffect(effect) : GameInteractor::RemoveEffect(effect);
+
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] One-hit KO " + std::string(state ? "enabled" : "disabled"));
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not " +
+                                                std::string(state ? "enable" : "disable") + " One-hit KO.");
         return CMD_FAILED;
     }
 }
 
 static bool PacifistHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    if (args.size() != 2) {
+    if (args.size() < 2) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
         return CMD_FAILED;
     }
+    uint8_t state;
 
     try {
-        chaosEffectPacifistMode = std::stoi(args[1], nullptr, 10) == 0 ? 0 : 1;
-        // Force interface to update to make the buttons transparent
-        gSaveContext.unk_13E8 = 50;
-        Interface_Update(gGlobalCtx);
-        return CMD_SUCCESS;
+        state = std::stoi(args[1], nullptr, 10) == 0 ? 0 : 1;
     } catch (std::invalid_argument const& ex) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Pacifist value must be a number.");
+        return CMD_FAILED;
+    }
+
+    GameInteractionEffectBase* effect = new GameInteractionEffect::PacifistMode();
+    GameInteractionEffectQueryResult result =
+        state ? GameInteractor::ApplyEffect(effect) : GameInteractor::RemoveEffect(effect);
+
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Pacifist " + std::string(state ? "enabled" : "disabled"));
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not " +
+                                                std::string(state ? "enable" : "disable") + " Pacifist.");
         return CMD_FAILED;
     }
 }
 
 static bool PaperLinkHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    if (args.size() != 2) {
+    if (args.size() < 2) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
         return CMD_FAILED;
     }
+    uint8_t state;
 
     try {
-        chaosEffectPaperLink = std::stoi(args[1], nullptr, 10) == 0 ? 0 : 1;
-        if (chaosEffectPaperLink) {
-            chaosEffectMinishLink = 0;
-            chaosEffectGiantLink = 0;
-        } else {
-            chaosEffectResetLinkScale = 1;
-        }
-        return CMD_SUCCESS;
+        state = std::stoi(args[1], nullptr, 10) == 0 ? 0 : 1;
     } catch (std::invalid_argument const& ex) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Paper Link value must be a number.");
+        return CMD_FAILED;
+    }
+
+    GameInteractionEffectBase* effect = new GameInteractionEffect::ModifyLinkSize();
+    effect->parameters[0] = GI_LINK_SIZE_PAPER;
+    GameInteractionEffectQueryResult result =
+        state ? GameInteractor::ApplyEffect(effect) : GameInteractor::RemoveEffect(effect);
+
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Paper Link " + std::string(state ? "enabled" : "disabled"));
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not " +
+                                                std::string(state ? "enable" : "disable") + " Paper Link.");
         return CMD_FAILED;
     }
 }
 
 static bool RainstormHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    if (args.size() != 2) {
+    if (args.size() < 2) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
         return CMD_FAILED;
     }
+    uint8_t state;
 
     try {
-        uint32_t rainstorm = std::stoi(args[1], nullptr, 10) == 0 ? 0 : 1;
-        if (rainstorm) {
-            gGlobalCtx->envCtx.unk_F2[0] = 20;    // rain intensity target
-            gGlobalCtx->envCtx.gloomySkyMode = 1; // start gloomy sky
-            if ((gWeatherMode != 0) || gGlobalCtx->envCtx.unk_17 != 0) {
-                gGlobalCtx->envCtx.unk_DE = 1;
-            }
-            gGlobalCtx->envCtx.lightningMode = LIGHTNING_MODE_ON;
-            Environment_PlayStormNatureAmbience(gGlobalCtx);
-        } else {
-            gGlobalCtx->envCtx.unk_F2[0] = 0;
-            if (gGlobalCtx->csCtx.state == CS_STATE_IDLE) {
-                Environment_StopStormNatureAmbience(gGlobalCtx);
-            } else if (func_800FA0B4(SEQ_PLAYER_BGM_MAIN) == NA_BGM_NATURE_AMBIENCE) {
-                Audio_SetNatureAmbienceChannelIO(NATURE_CHANNEL_LIGHTNING, CHANNEL_IO_PORT_1, 0);
-                Audio_SetNatureAmbienceChannelIO(NATURE_CHANNEL_RAIN, CHANNEL_IO_PORT_1, 0);
-            }
-            osSyncPrintf("\n\n\nE_wether_flg=[%d]", gWeatherMode);
-            osSyncPrintf("\nrain_evt_trg=[%d]\n\n", gGlobalCtx->envCtx.gloomySkyMode);
-            if (gWeatherMode == 0 && (gGlobalCtx->envCtx.gloomySkyMode == 1)) {
-                gGlobalCtx->envCtx.gloomySkyMode = 2; // end gloomy sky
-            } else {
-                gGlobalCtx->envCtx.gloomySkyMode = 0;
-                gGlobalCtx->envCtx.unk_DE = 0;
-            }
-            gGlobalCtx->envCtx.lightningMode = LIGHTNING_MODE_LAST;
-        }
-
-
-        return CMD_SUCCESS;
+        state = std::stoi(args[1], nullptr, 10) == 0 ? 0 : 1;
     } catch (std::invalid_argument const& ex) {
-        SohImGui::GetConsole()->SendErrorMessage("[SOH] rainstorm value must be a number.");
+        SohImGui::GetConsole()->SendErrorMessage("[SOH] Rainstorm value must be a number.");
+        return CMD_FAILED;
+    }
+
+    GameInteractionEffectBase* effect = new GameInteractionEffect::WeatherRainstorm();
+    GameInteractionEffectQueryResult result =
+        state ? GameInteractor::ApplyEffect(effect) : GameInteractor::RemoveEffect(effect);
+
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Rainstorm " + std::string(state ? "enabled" : "disabled"));
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not " +
+                                                std::string(state ? "enable" : "disable") + " Rainstorm.");
         return CMD_FAILED;
     }
 }
 
 static bool ReverseControlsHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    if (args.size() != 2) {
+    if (args.size() < 2) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
         return CMD_FAILED;
     }
+    uint8_t state;
 
     try {
-        chaosEffectReverseControls = std::stoi(args[1], nullptr, 10) == 0 ? 0 : 1;
-        return CMD_SUCCESS;
+        state = std::stoi(args[1], nullptr, 10) == 0 ? 0 : 1;
     } catch (std::invalid_argument const& ex) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Reverse controls value must be a number.");
+        return CMD_FAILED;
+    }
+
+    GameInteractionEffectBase* effect = new GameInteractionEffect::ReverseControls();
+    GameInteractionEffectQueryResult result =
+        state ? GameInteractor::ApplyEffect(effect) : GameInteractor::RemoveEffect(effect);
+
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Reverse controls " +
+                                                std::string(state ? "enabled" : "disabled"));
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not " +
+                                                std::string(state ? "enable" : "disable") + " Reverse controls.");
         return CMD_FAILED;
     }
 }
 
 static bool UpdateRupeesHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    if (args.size() != 2) {
+    if (args.size() < 2) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
         return CMD_FAILED;
     }
+    GameInteractionEffectBase* effect = new GameInteractionEffect::ModifyRupees();
 
     try {
-        int value = std::stoi(args[1], nullptr, 10);
-        Rupees_ChangeBy(value);
-        return CMD_SUCCESS;
+        effect->parameters[0] = std::stoi(args[1], nullptr, 10);
     } catch (std::invalid_argument const& ex) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Rupee value must be a number.");
+        return CMD_FAILED;
+    }
+
+    GameInteractionEffectQueryResult result = GameInteractor::ApplyEffect(effect);
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Rupees updated");
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not update rupees.");
         return CMD_FAILED;
     }
 }
 
 static bool SpeedModifierHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    if (args.size() != 2) {
+    if (args.size() < 2) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
         return CMD_FAILED;
     }
+    GameInteractionEffectBase* effect = new GameInteractionEffect::ModifyRunSpeedModifier();
 
     try {
-        chaosEffectSpeedModifier = std::stoi(args[1], nullptr, 10);
-        return CMD_SUCCESS;
+        effect->parameters[0] = std::stoi(args[1], nullptr, 10);
     } catch (std::invalid_argument const& ex) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Speed modifier value must be a number.");
+        return CMD_FAILED;
+    }
+
+    GameInteractionEffectQueryResult result = GameInteractor::ApplyEffect(effect);
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Speed modifier updated");
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not update speed modifier.");
         return CMD_FAILED;
     }
 }
@@ -811,7 +1093,7 @@ const static std::map<std::string, uint16_t> boots {
 };
 
 static bool BootsHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    if (args.size() != 2) {
+    if (args.size() < 2) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
         return CMD_FAILED;
     }
@@ -822,19 +1104,81 @@ static bool BootsHandler(std::shared_ptr<Ship::Console> Console, const std::vect
         return CMD_FAILED;
     }
 
-    Player* player = GET_PLAYER(gGlobalCtx);
-    player->currentBoots = it->second;
-    Inventory_ChangeEquipment(EQUIP_BOOTS, it->second + 1);
-    Player_SetBootData(gGlobalCtx, player);
+    GameInteractionEffectBase* effect = new GameInteractionEffect::ForceEquipBoots();
+    effect->parameters[0] = it->second;
+    GameInteractionEffectQueryResult result = GameInteractor::ApplyEffect(effect);
 
-    return CMD_SUCCESS;
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Boots updated.");
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not update boots.");
+        return CMD_FAILED;
+    }
 }
 
-static bool KnockbackHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    if (args.size() != 2) {
+const static std::map<std::string, uint16_t> shields {
+    { "deku", ITEM_SHIELD_DEKU },
+    { "hylian", ITEM_SHIELD_HYLIAN },
+    { "mirror", ITEM_SHIELD_MIRROR },
+};
+
+static bool GiveShieldHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
+    if (args.size() < 2) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
         return CMD_FAILED;
     }
+
+    const auto& it = shields.find(args[1]);
+    if (it == shields.end()) {
+        SohImGui::GetConsole()->SendErrorMessage("Invalid shield type. Options are 'deku', 'hylian' and 'mirror'");
+        return CMD_FAILED;
+    }
+
+    GameInteractionEffectBase* effect = new GameInteractionEffect::GiveOrTakeShield();
+    effect->parameters[0] = it->second;
+    GameInteractionEffectQueryResult result = GameInteractor::ApplyEffect(effect);
+
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Gave shield.");
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not give shield.");
+        return CMD_FAILED;
+    }
+}
+
+static bool TakeShieldHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
+    if (args.size() < 2) {
+        SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
+        return CMD_FAILED;
+    }
+
+    const auto& it = shields.find(args[1]);
+    if (it == shields.end()) {
+        SohImGui::GetConsole()->SendErrorMessage("Invalid shield type. Options are 'deku', 'hylian' and 'mirror'");
+        return CMD_FAILED;
+    }
+
+    GameInteractionEffectBase* effect = new GameInteractionEffect::GiveOrTakeShield();
+    effect->parameters[0] = it->second * -1;
+    GameInteractionEffectQueryResult result = GameInteractor::ApplyEffect(effect);
+
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Took shield.");
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not take shield.");
+        return CMD_FAILED;
+    }
+}
+
+static bool KnockbackHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
+    if (args.size() < 2) {
+        SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
+        return CMD_FAILED;
+    }
+    GameInteractionEffectBase* effect = new GameInteractionEffect::KnockbackPlayer();
 
     try {
         int value = std::stoi(args[1], nullptr, 10);
@@ -843,44 +1187,121 @@ static bool KnockbackHandler(std::shared_ptr<Ship::Console> Console, const std::
             return CMD_FAILED;
         }
 
-        Player* player = GET_PLAYER(gGlobalCtx);
-        func_8002F71C(gGlobalCtx, &player->actor, value * 5, player->actor.world.rot.y + 0x8000, value * 5);
-    
-        return CMD_SUCCESS;
+        effect->parameters[0] = value;
     } catch (std::invalid_argument const& ex) {
         SohImGui::GetConsole()->SendErrorMessage("[SOH] Knockback value must be a number.");
+        return CMD_FAILED;
+    }
+
+    GameInteractionEffectQueryResult result = GameInteractor::ApplyEffect(effect);
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Knockback applied");
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not apply knockback.");
         return CMD_FAILED;
     }
 }
 
 static bool ElectrocuteHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    Player* player = GET_PLAYER(gGlobalCtx);
-    if (PlayerGrounded(player)) {
-        func_80837C0C(gGlobalCtx, player, 4, 0, 0, 0, 0);
-        return CMD_SUCCESS;
-    }
+    GameInteractionEffectBase* effect = new GameInteractionEffect::ElectrocutePlayer();
+    GameInteractionEffectQueryResult result = GameInteractor::ApplyEffect(effect);
 
-    return CMD_FAILED;
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Electrocuted player");
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not electrocute player.");
+        return CMD_FAILED;
+    }
 }
 
 static bool BurnHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    Player* player = GET_PLAYER(gGlobalCtx);
-    if (PlayerGrounded(player)) {
-        for (int i = 0; i < 18; i++) {
-            player->flameTimers[i] = Rand_S16Offset(0, 200);
-        }
-        player->isBurning = true;
-        func_80837C0C(gGlobalCtx, player, 0, 0, 0, 0, 0);
+    GameInteractionEffectBase* effect = new GameInteractionEffect::BurnPlayer();
+    GameInteractionEffectQueryResult result = GameInteractor::ApplyEffect(effect);
+
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Burned player");
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not burn player.");
         return CMD_FAILED;
     }
-    return CMD_SUCCESS;
 }
 
 static bool CuccoStormHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
-    Player* player = GET_PLAYER(gGlobalCtx);
-    EnNiw* cucco = (EnNiw*)Actor_Spawn(&gGlobalCtx->actorCtx, gGlobalCtx, ACTOR_EN_NIW, player->actor.world.pos.x,
-                                       player->actor.world.pos.y + 2200, player->actor.world.pos.z, 0, 0, 0, 0);
-    cucco->actionFunc = func_80AB70A0_nocutscene;
+    GameInteractionEffectQueryResult result = GameInteractor::RawAction::SpawnActor(ACTOR_EN_NIW, 0);
+
+    if (result == GameInteractionEffectQueryResult::Possible) {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Spawned cucco storm");
+        return CMD_SUCCESS;
+    } else {
+        SohImGui::GetConsole()->SendInfoMessage("[SOH] Command failed: Could not spawn cucco storm.");
+        return CMD_FAILED;
+    }
+}
+
+static bool GenerateRandoHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
+    if (args.size() == 1) {
+        if (GenerateRandomizer()) {
+            return CMD_SUCCESS;
+        }
+    }
+
+    try {
+        uint32_t value = std::stoi(args[1], NULL, 10);
+        std::string seed = "";
+        if (args.size() == 3) {
+            int testing = std::stoi(args[1], nullptr, 10);
+            seed = "seed_testing_count";
+        }
+
+        if (GenerateRandomizer(seed + std::to_string(value))){
+            return CMD_SUCCESS;
+        }
+    } catch (std::invalid_argument const& ex) {
+        SohImGui::GetConsole()->SendErrorMessage("[SOH] seed|count value must be a number.");
+        return CMD_FAILED;
+    }
+
+
+    SohImGui::GetConsole()->SendErrorMessage("[SOH] Rando generation already in progress");
+    return CMD_FAILED;
+}
+
+static bool CosmeticsHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
+    if (args.size() < 2) {
+        SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
+        return CMD_FAILED;
+    }
+
+    if (args[1].compare("reset") == 0) {
+        CosmeticsEditor_ResetAll();
+    } else if (args[1].compare("randomize") == 0) {
+        CosmeticsEditor_RandomizeAll();
+    } else {
+        SohImGui::GetConsole()->SendErrorMessage("[SOH] Invalid argument passed, must be 'reset' or 'randomize'");
+        return CMD_FAILED;
+    }
+
+    return CMD_SUCCESS;
+}
+
+static bool SfxHandler(std::shared_ptr<Ship::Console> Console, const std::vector<std::string>& args) {
+    if (args.size() < 2) {
+        SohImGui::GetConsole()->SendErrorMessage("[SOH] Unexpected arguments passed");
+        return CMD_FAILED;
+    }
+
+    if (args[1].compare("reset") == 0) {
+        AudioEditor_ResetAll();
+    } else if (args[1].compare("randomize") == 0) {
+        AudioEditor_RandomizeAll();
+    } else {
+        SohImGui::GetConsole()->SendErrorMessage("[SOH] Invalid argument passed, must be 'reset' or 'randomize'");
+        return CMD_FAILED;
+    }
+
     return CMD_SUCCESS;
 }
 
@@ -922,9 +1343,9 @@ static bool SetCVarHandler(std::shared_ptr<Ship::Console> Console, const std::ve
     int vType = CheckVarType(args[2]);
 
     if (vType == VARTYPE_STRING)
-        CVar_SetString(args[1].c_str(), args[2].c_str());
+        CVarSetString(args[1].c_str(), args[2].c_str());
     else if (vType == VARTYPE_FLOAT)
-        CVar_SetFloat((char*)args[1].c_str(), std::stof(args[2]));
+        CVarSetFloat((char*)args[1].c_str(), std::stof(args[2]));
     else if (vType == VARTYPE_RGBA)
     {
         uint32_t val = std::stoul(&args[2].c_str()[1], nullptr, 16);
@@ -933,12 +1354,12 @@ static bool SetCVarHandler(std::shared_ptr<Ship::Console> Console, const std::ve
         clr.g = val >> 16;
         clr.b = val >> 8;
         clr.a = val & 0xFF;
-        CVar_SetRGBA((char*)args[1].c_str(), clr);
+        CVarSetColor((char*)args[1].c_str(), clr);
     }
     else
-        CVar_SetS32(args[1].c_str(), std::stoi(args[2]));
+        CVarSetInteger(args[1].c_str(), std::stoi(args[2]));
 
-    CVar_Save();
+    CVarSave();
 
     //SohImGui::GetConsole()->SendInfoMessage("[SOH] Updated player position to [ %.2f, %.2f, %.2f ]", pos.x, pos.y, pos.z);
     return CMD_SUCCESS;
@@ -948,18 +1369,18 @@ static bool GetCVarHandler(std::shared_ptr<Ship::Console> Console, const std::ve
     if (args.size() < 2)
         return CMD_FAILED;
 
-    CVar* cvar = CVar_Get(args[1].c_str());
+    auto cvar = CVarGet(args[1].c_str());
 
     if (cvar != nullptr)
     {
-        if (cvar->type == CVarType::S32)
-            SohImGui::GetConsole()->SendInfoMessage("[SOH] Variable %s is %i", args[1].c_str(), cvar->value.valueS32);
-        else if (cvar->type == CVarType::Float)
-            SohImGui::GetConsole()->SendInfoMessage("[SOH] Variable %s is %f", args[1].c_str(), cvar->value.valueFloat);
-        else if (cvar->type == CVarType::String)
-            SohImGui::GetConsole()->SendInfoMessage("[SOH] Variable %s is %s", args[1].c_str(), cvar->value.valueStr);
-        else if (cvar->type == CVarType::RGBA)
-            SohImGui::GetConsole()->SendInfoMessage("[SOH] Variable %s is %08X", args[1].c_str(), cvar->value.valueRGBA);
+        if (cvar->Type == Ship::ConsoleVariableType::Integer)
+            SohImGui::GetConsole()->SendInfoMessage("[SOH] Variable %s is %i", args[1].c_str(), cvar->Integer);
+        else if (cvar->Type == Ship::ConsoleVariableType::Float)
+            SohImGui::GetConsole()->SendInfoMessage("[SOH] Variable %s is %f", args[1].c_str(), cvar->Float);
+        else if (cvar->Type == Ship::ConsoleVariableType::String)
+            SohImGui::GetConsole()->SendInfoMessage("[SOH] Variable %s is %s", args[1].c_str(), cvar->String.c_str());
+        else if (cvar->Type == Ship::ConsoleVariableType::Color)
+            SohImGui::GetConsole()->SendInfoMessage("[SOH] Variable %s is %08X", args[1].c_str(), cvar->Color);
     }
     else
     {
@@ -986,7 +1407,9 @@ void DebugConsole_Init(void) {
     // Map & Location
     CMD_REGISTER("void", { VoidHandler, "Voids out of the current map." });
     CMD_REGISTER("reload", { ReloadHandler, "Reloads the current map." });
-    CMD_REGISTER("fw", { FWHandler,"Spawns the player where Farore's Wind is set." });
+    CMD_REGISTER("fw", { FWHandler,"Spawns the player where Farore's Wind is set." , {
+        { "clear|warp|backup", Ship::ArgumentType::TEXT }
+    }});
     CMD_REGISTER("entrance", { EntranceHandler, "Sends player to the entered entrance (hex)", {
         { "entrance", Ship::ArgumentType::NUMBER }
     }});
@@ -1004,16 +1427,14 @@ void DebugConsole_Init(void) {
         { "Item ID", Ship::ArgumentType::NUMBER }
     }});
 
-    CMD_REGISTER("givedekushield", { GiveDekuShieldHandler, "Gives a deku shield and equips it when Link is a child with no shield equiped." });
-
     CMD_REGISTER("spawn", { ActorSpawnHandler, "Spawn an actor.", { { "actor_id", Ship::ArgumentType::NUMBER },
-                              { "data", Ship::ArgumentType::NUMBER },
-                              { "x", Ship::ArgumentType::PLAYER_POS, true },
-                              { "y", Ship::ArgumentType::PLAYER_POS, true },
-                              { "z", Ship::ArgumentType::PLAYER_POS, true },
-                              { "rx", Ship::ArgumentType::PLAYER_ROT, true },
-                              { "ry", Ship::ArgumentType::PLAYER_ROT, true },
-                              { "rz", Ship::ArgumentType::PLAYER_ROT, true }
+        { "data", Ship::ArgumentType::NUMBER },
+        { "x", Ship::ArgumentType::PLAYER_POS, true },
+        { "y", Ship::ArgumentType::PLAYER_POS, true },
+        { "z", Ship::ArgumentType::PLAYER_POS, true },
+        { "rx", Ship::ArgumentType::PLAYER_ROT, true },
+        { "ry", Ship::ArgumentType::PLAYER_ROT, true },
+        { "rz", Ship::ArgumentType::PLAYER_ROT, true }
     }});
 
     CMD_REGISTER("pos", { SetPosHandler, "Sets the position of the player.", {
@@ -1031,14 +1452,24 @@ void DebugConsole_Init(void) {
         { "varName", Ship::ArgumentType::TEXT }
     }});
     
-    CMD_REGISTER("ammo", { AmmoHandler, "Changes ammo of an item.", {
-        { "item", Ship::ArgumentType::TEXT },
+    CMD_REGISTER("addammo", { AddAmmoHandler, "Adds ammo of an item.", {
+        { "sticks|nuts|bombs|seeds|arrows|bombchus|beans", Ship::ArgumentType::TEXT },
+        { "count", Ship::ArgumentType::NUMBER }
+    }});
+
+    CMD_REGISTER("takeammo", { TakeAmmoHandler, "Removes ammo of an item.", {
+        { "sticks|nuts|bombs|seeds|arrows|bombchus|beans", Ship::ArgumentType::TEXT },
         { "count", Ship::ArgumentType::NUMBER }
     }});
 
     CMD_REGISTER("bottle", { BottleHandler, "Changes item in a bottle slot.", {
         { "item", Ship::ArgumentType::TEXT },
         { "slot", Ship::ArgumentType::NUMBER }
+    }});
+
+    CMD_REGISTER("give_item", { GiveItemHandler,  "Gives an item to the player as if it was given from an actor", {
+        { "vanilla|randomizer", Ship::ArgumentType::TEXT },
+        { "giveItemID", Ship::ArgumentType::NUMBER }
     }});
 
     CMD_REGISTER("item", { ItemHandler,  "Sets item ID in arg 1 into slot arg 2. No boundary checks. Use with caution.", {
@@ -1119,7 +1550,15 @@ void DebugConsole_Init(void) {
     }});
 
     CMD_REGISTER("boots", { BootsHandler, "Activates boots.", {
-        { "type", Ship::ArgumentType::TEXT },
+        { "kokiri|iron|hover", Ship::ArgumentType::TEXT },
+    }});
+
+    CMD_REGISTER("giveshield", { GiveShieldHandler, "Gives a shield and equips it when Link is the right age for it.", {
+        { "deku|hylian|mirror", Ship::ArgumentType::TEXT },
+    }});
+
+    CMD_REGISTER("takeshield", { TakeShieldHandler, "Takes a shield and unequips it if Link is wearing it.", {
+        { "deku|hylian|mirror", Ship::ArgumentType::TEXT },
     }});
 
     CMD_REGISTER("knockback", { KnockbackHandler, "Knocks Link back.", {
@@ -1132,5 +1571,18 @@ void DebugConsole_Init(void) {
 
     CMD_REGISTER("cucco_storm", { CuccoStormHandler, "Cucco Storm" });
 
-    CVar_Load();
+    CMD_REGISTER("gen_rando", { GenerateRandoHandler, "Generate a randomizer seed", {
+        { "seed|count", Ship::ArgumentType::NUMBER, true },
+        { "testing", Ship::ArgumentType::NUMBER, true },
+    }});
+
+    CMD_REGISTER("cosmetics", { CosmeticsHandler, "Change cosmetics.", {
+        { "reset|randomize", Ship::ArgumentType::TEXT },
+    }});
+
+    CMD_REGISTER("sfx", { SfxHandler, "Change SFX.", {
+        { "reset|randomize", Ship::ArgumentType::TEXT },
+    }});
+
+    CVarLoad();
 }

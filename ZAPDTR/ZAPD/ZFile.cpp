@@ -221,7 +221,7 @@ void ZFile::ParseXML(tinyxml2::XMLElement* reader, const std::string& filename)
 		// Check for repeated attributes.
 		if (offsetXml != nullptr)
 		{
-			rawDataIndex = strtol(StringHelper::Split(offsetXml, "0x")[1].c_str(), NULL, 16);
+			rawDataIndex = strtol(StringHelper::Split(std::string(offsetXml), "0x")[1].c_str(), NULL, 16);
 
 			if (offsetSet.find(offsetXml) != offsetSet.end())
 			{
@@ -800,19 +800,22 @@ void ZFile::GenerateSourceHeaderFiles()
 {
 	OutputFormatter formatter;
 
-	formatter.Write("#pragma once\n");
+	formatter.Write("#pragma once\n\n");
+	formatter.Write("#include \"align_asset_macro.h\"\n");
 	std::set<std::string> nameSet;
 	for (ZResource* res : resources)
 	{
 		std::string resSrc = res->GetSourceOutputHeader("", &nameSet);
-		formatter.Write(resSrc);
-
-		if (resSrc != "")
-			formatter.Write("\n");
+		if (!resSrc.empty()) 
+		{
+			formatter.Write(resSrc.front() == '\n' ? resSrc : "\n" + resSrc);
+			formatter.Write(res == resources.back() ? "" : "\n");
+		}
 	}
 
 	for (auto& sym : symbolResources)
 	{
+		formatter.Write("\n\n");
 		formatter.Write(sym.second->GetSourceOutputHeader("", &nameSet));
 	}
 
@@ -823,15 +826,19 @@ void ZFile::GenerateSourceHeaderFiles()
 	if (Globals::Instance->verbosity >= VerbosityLevel::VERBOSITY_INFO)
 		printf("Writing H file: %s\n", headerFilename.c_str());
 
+	std::string output = formatter.GetOutput();
+	while (output.back() == '\n')
+		output.pop_back();
+
 	if (Globals::Instance->fileMode != ZFileMode::ExtractDirectory)
-		File::WriteAllText(headerFilename, formatter.GetOutput());
+		File::WriteAllText(headerFilename, output);
 	else if (Globals::Instance->sourceOutputPath != "")
 	{
 		std::string xmlPath = xmlFilePath.string();
 		xmlPath = StringHelper::Replace(xmlPath, "\\", "/");
 		auto pathList = StringHelper::Split(xmlPath, "/");
 		std::string outPath = "";
-		
+
 		for (int i = 0; i < 3; i++)
 			outPath += pathList[i] + "/";
 
@@ -849,7 +856,7 @@ void ZFile::GenerateSourceHeaderFiles()
 				outPath += "/";
 		}
 
-		File::WriteAllText(outPath, formatter.GetOutput());
+		File::WriteAllText(outPath, output);
 	}
 }
 
@@ -1192,7 +1199,7 @@ std::string ZFile::ProcessTextureIntersections([[maybe_unused]] const std::strin
 
 				if (declarations.find(currentOffset) != declarations.end())
 					declarations.at(currentOffset)->size = currentTex->GetRawDataSize();
-				
+
 				currentTex->DeclareVar(GetName(), "");
 			}
 			else

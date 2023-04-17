@@ -44,8 +44,8 @@ typedef enum {
 } OpenKakarikoSetting;
 
 typedef enum {
-    OPENDOOROFTIME_INTENDED,
     OPENDOOROFTIME_CLOSED,
+    OPENDOOROFTIME_SONGONLY,
     OPENDOOROFTIME_OPEN,
 } OpenDoorOfTimeSetting;
 
@@ -69,6 +69,7 @@ typedef enum {
     RAINBOWBRIDGE_REWARDS,
     RAINBOWBRIDGE_DUNGEONS,
     RAINBOWBRIDGE_TOKENS,
+    RAINBOWBRIDGE_GREG,
 } RainbowBridgeSetting;
 
 typedef enum {
@@ -91,6 +92,12 @@ typedef enum {
     SHUFFLEDUNGEONS_ON,
     SHUFFLEDUNGEONS_GANON,
 } ShuffleDungeonEntrancesSetting;
+
+typedef enum {
+    SHUFFLEBOSSES_OFF,
+    SHUFFLEBOSSES_AGE_RESTRICTED,
+    SHUFFLEBOSSES_FULL,
+} ShuffleBossEntrancesSetting;
 
 typedef enum {
     SHUFFLEINTERIORS_OFF,
@@ -203,6 +210,13 @@ typedef enum {
 } GerudoKeysSetting;
 
 typedef enum {
+    KEYRINGS_OFF,
+    KEYRINGS_RANDOM,
+    KEYRINGS_RANDOM_COUNT,
+    KEYRINGS_SELECTION,
+} KeyRingsSetting;
+
+typedef enum {
     BOSSKEYSANITY_START_WITH,
     BOSSKEYSANITY_VANILLA,
     BOSSKEYSANITY_OWN_DUNGEON,
@@ -224,6 +238,7 @@ typedef enum {
     GANONSBOSSKEY_LACS_REWARDS,
     GANONSBOSSKEY_LACS_DUNGEONS,
     GANONSBOSSKEY_LACS_TOKENS,
+    GANONSBOSSKEY_FINAL_GS_REWARD,
 } GanonsBossKeySetting;
 
 typedef enum {
@@ -380,9 +395,19 @@ typedef struct {
     uint8_t startingAge;
     uint8_t resolvedStartingAge;
     uint8_t shuffleDungeonEntrances;
+    uint8_t shuffleBossEntrances;
     uint8_t shuffleOverworldEntrances;
     uint8_t shuffleInteriorEntrances;
     uint8_t shuffleGrottoEntrances;
+    uint8_t shuffleOwlDrops;
+    uint8_t shuffleWarpSongs;
+    uint8_t shuffleOverworldSpawns;
+    uint8_t mixedEntrancePools;
+    uint8_t mixDungeons;
+    uint8_t mixOverworld;
+    uint8_t mixInteriors;
+    uint8_t mixGrottos;
+    uint8_t decoupleEntrances;
     uint8_t bombchusInLogic;
     uint8_t ammoDrops;
     uint8_t heartDropRefill;
@@ -396,6 +421,7 @@ typedef struct {
     uint8_t tokensanity;
     uint8_t scrubsanity;
     uint8_t shopsanity;
+    uint8_t shopsanityPrices;
     uint8_t shuffleCows;
     uint8_t shuffleKokiriSword;
     uint8_t shuffleOcarinas;
@@ -406,6 +432,7 @@ typedef struct {
     uint8_t shuffleFrogSongRupees;
     uint8_t shuffleAdultTradeQuest;
     uint8_t shuffleChestMinigame;
+    uint8_t shuffle100GsReward;
 
     uint8_t mapsAndCompasses;
     uint8_t keysanity;
@@ -862,10 +889,11 @@ void UpdateSettings(std::unordered_map<RandomizerSettingKey, uint8_t> cvarSettin
   const std::vector<Menu*> GetAllOptionMenus();
 
 
-  extern std::string seed;
+  extern uint32_t seed;
   extern std::string version;
   extern std::array<uint8_t, 5> hashIconIndexes;
   extern std::string hash;
+  extern std::string seedString;
 
   extern bool skipChildZelda;
 
@@ -887,9 +915,19 @@ void UpdateSettings(std::unordered_map<RandomizerSettingKey, uint8_t> cvarSettin
   extern uint8_t ResolvedStartingAge;
   extern Option ShuffleEntrances;
   extern Option ShuffleDungeonEntrances;
+  extern Option ShuffleBossEntrances;
   extern Option ShuffleOverworldEntrances;
   extern Option ShuffleInteriorEntrances;
   extern Option ShuffleGrottoEntrances;
+  extern Option ShuffleOwlDrops;
+  extern Option ShuffleWarpSongs;
+  extern Option ShuffleOverworldSpawns;
+  extern Option MixedEntrancePools;
+  extern Option MixDungeons;
+  extern Option MixOverworld;
+  extern Option MixInteriors;
+  extern Option MixGrottos;
+  extern Option DecoupleEntrances;
   extern Option BombchusInLogic;
   extern Option AmmoDrops;
   extern Option HeartDropRefill;
@@ -900,6 +938,8 @@ void UpdateSettings(std::unordered_map<RandomizerSettingKey, uint8_t> cvarSettin
   extern Option LinksPocketItem;
   extern Option ShuffleSongs;
   extern Option Shopsanity;
+  extern Option ShopsanityPrices;
+  extern Option ShopsanityPricesAffordable;
   extern Option Tokensanity;
   extern Option Scrubsanity;
   extern Option ShuffleCows;
@@ -912,6 +952,7 @@ void UpdateSettings(std::unordered_map<RandomizerSettingKey, uint8_t> cvarSettin
   extern Option ShuffleFrogSongRupees;
   extern Option ShuffleAdultTradeQuest;
   extern Option ShuffleChestMinigame;
+  extern Option Shuffle100GSReward;
 
   extern Option MapsAndCompasses;
   extern Option Keysanity;
@@ -925,6 +966,7 @@ void UpdateSettings(std::unordered_map<RandomizerSettingKey, uint8_t> cvarSettin
   extern Option LACSDungeonCount;
   extern Option LACSTokenCount;
   extern Option KeyRings;
+  extern Option KeyRingsRandomCount;
   extern Option RingFortress;
   extern Option RingForest;
   extern Option RingFire;
@@ -955,6 +997,17 @@ void UpdateSettings(std::unordered_map<RandomizerSettingKey, uint8_t> cvarSettin
   extern Option GossipStoneHints;
   extern Option ClearerHints;
   extern Option HintDistribution;
+  extern Option AltarHintText;
+  extern Option GanondorfHintText;
+  extern Option DampeHintText;
+  extern Option GregHintText;
+  extern Option Kak10GSHintText;
+  extern Option Kak20GSHintText;
+  extern Option Kak30GSHintText;
+  extern Option Kak40GSHintText;
+  extern Option Kak50GSHintText;
+  extern Option ScrubHintText;
+  extern Option WarpSongHints;
   extern Option DamageMultiplier;
   extern Option StartingTime;
   extern Option ChestAnimations;
@@ -1133,6 +1186,7 @@ void UpdateSettings(std::unordered_map<RandomizerSettingKey, uint8_t> cvarSettin
   extern Option LogicShadowUmbrella;
   extern Option LogicShadowFreestandingKey;
   extern Option LogicShadowStatue;
+  extern Option LogicShadowBongo;
   extern Option LogicChildDeadhand;
   extern Option LogicGtgWithoutHookshot;
   extern Option LogicGtgFakeWall;

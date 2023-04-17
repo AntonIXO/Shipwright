@@ -1,12 +1,12 @@
 #ifndef Z_EN_DNS_H
 #define Z_EN_DNS_H
 
-#include "ultra64.h"
+#include <libultraship/libultra.h>
 #include "global.h"
 
 struct EnDns;
 
-typedef void (*EnDnsActionFunc)(struct EnDns*, GlobalContext*);
+typedef void (*EnDnsActionFunc)(struct EnDns*, PlayState*);
 typedef u32 (*EnDnsPurchaseableCheck)(struct EnDns*);
 typedef void (*EnDnsSetRupeesAndFlags)(struct EnDns*);
 

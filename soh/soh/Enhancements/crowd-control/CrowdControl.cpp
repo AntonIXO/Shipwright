@@ -1,10 +1,13 @@
 #ifdef ENABLE_CROWD_CONTROL
 
 #include "CrowdControl.h"
-#include <libultraship/Cvar.h>
-#include <libultraship/Console.h>
-#include <libultraship/ImGuiImpl.h>
+#include "CrowdControlTypes.h"
+#include <libultraship/bridge.h>
+#include <Console.h>
+#include <ImGuiImpl.h>
 #include <nlohmann/json.hpp>
+#include <spdlog/spdlog.h>
+#include <spdlog/fmt/fmt.h>
 #include <regex>
 
 extern "C" {
@@ -12,527 +15,813 @@ extern "C" {
 #include "variables.h"
 #include "functions.h"
 #include "macros.h"
-extern GlobalContext* gGlobalCtx;
+extern PlayState* gPlayState;
 }
 
-#include "../debugconsole.h"
-
-#define CMD_EXECUTE SohImGui::GetConsole()->Dispatch
-
-void CrowdControl::InitCrowdControl() {
+void CrowdControl::Init() {
     SDLNet_Init();
+}
+
+void CrowdControl::Shutdown() {
+    SDLNet_Quit();
+}
+
+void CrowdControl::Enable() {
+    if (isEnabled) {
+        return;
+    }
 
     if (SDLNet_ResolveHost(&ip, "127.0.0.1", 43384) == -1) {
-        printf("SDLNet_ResolveHost: %s\n", SDLNet_GetError());
+        SPDLOG_ERROR("[CrowdControl] SDLNet_ResolveHost: {}", SDLNet_GetError());
     }
 
-    ccThreadReceive = std::thread(&CrowdControl::ReceiveFromCrowdControl, this);
+    isEnabled = true;
+    ccThreadReceive = std::thread(&CrowdControl::ListenToServer, this);
+    ccThreadProcess = std::thread(&CrowdControl::ProcessActiveEffects, this);
 }
 
-void CrowdControl::RunCrowdControl(CCPacket* packet) {
-    bool paused = false;
-    EffectResult lastResult = EffectResult::NotReady;
-    bool isTimed = packet->timeRemaining > 0;
+void CrowdControl::Disable() {
+    if (!isEnabled) {
+        return;
+    }
 
-    while (connected) {
-        EffectResult effectResult = ExecuteEffect(packet->effectType.c_str(), packet->effectValue, 0);
-        if (effectResult == EffectResult::Success) {
-            // If we have a success after being previously paused, we fire the Resumed event
-            if (paused && packet->timeRemaining > 0) {
-                paused = false;
-                nlohmann::json dataSend;
-                dataSend["id"] = packet->packetId;
-                dataSend["type"] = 0;
-                dataSend["timeRemaining"] = packet->timeRemaining;
-                dataSend["status"] = EffectResult::Resumed;
+    isEnabled = false;
+    ccThreadReceive.join();
+    ccThreadProcess.join();
+}
 
-                std::string jsonResponse = dataSend.dump();
-                SDLNet_TCP_Send(tcpsock, jsonResponse.c_str(), jsonResponse.size() + 1);
+void CrowdControl::ListenToServer() {
+    while (isEnabled) {
+        while (!connected && isEnabled) {
+            SPDLOG_TRACE("[CrowdControl] Attempting to make connection to server...");
+            tcpsock = SDLNet_TCP_Open(&ip);
+
+            if (tcpsock) {
+                connected = true;
+                SPDLOG_TRACE("[CrowdControl] Connection to server established!");
+                break;
             }
-
-            // If time remaining has reached 0 or was 0, we have finished let's remove the command and end the thread
-            if (packet->timeRemaining <= 0) {
-                receivedCommandsMutex.lock();
-                receivedCommands.erase(std::remove(receivedCommands.begin(), receivedCommands.end(), packet), receivedCommands.end());
-                receivedCommandsMutex.unlock();
-                RemoveEffect(packet->effectType.c_str());
-
-                // If not timed, let's fire the one and only success
-                if (!isTimed) {
-                    nlohmann::json dataSend;
-                    dataSend["id"] = packet->packetId;
-                    dataSend["type"] = 0;
-                    dataSend["timeRemaining"] = packet->timeRemaining;
-                    dataSend["status"] = EffectResult::Success;
-
-                    std::string jsonResponse = dataSend.dump();
-                    SDLNet_TCP_Send(tcpsock, jsonResponse.c_str(), jsonResponse.size() + 1);
-
-                    delete packet;
-                }
-
-                return;
-            }
-
-            // Decrement remaining time by the second that elapsed between thread runs
-            packet->timeRemaining -= 1000;
-            // We don't want to emit repeated events, so ensure we only emit changes in events
-            if (effectResult != lastResult) {
-                lastResult = effectResult;
-
-                nlohmann::json dataSend;
-                dataSend["id"] = packet->packetId;
-                dataSend["type"] = 0;
-                dataSend["timeRemaining"] = packet->timeRemaining;
-                dataSend["status"] = effectResult;
-
-                std::string jsonResponse = dataSend.dump();
-                SDLNet_TCP_Send(tcpsock, jsonResponse.c_str(), jsonResponse.size() + 1);
-            }
-        } else if (effectResult == EffectResult::Retry && paused == false && packet->timeRemaining > 0) {
-            paused = true;
-            nlohmann::json dataSend;
-            dataSend["id"] = packet->packetId;
-            dataSend["type"] = 0;
-            dataSend["timeRemaining"] = packet->timeRemaining;
-            dataSend["status"] = EffectResult::Paused;
-
-            std::string jsonResponse = dataSend.dump();
-            SDLNet_TCP_Send(tcpsock, jsonResponse.c_str(), jsonResponse.size() + 1);
         }
-        
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-    }
-}
 
-void CrowdControl::ReceiveFromCrowdControl()
-{
-    printf("Waiting for a connection from Crowd Control...");
-
-    while (!connected && CVar_GetS32("gCrowdControl", 0)) {
-        tcpsock = SDLNet_TCP_Open(&ip);
-
+        SDLNet_SocketSet socketSet = SDLNet_AllocSocketSet(1);
         if (tcpsock) {
-            connected = true;
-            printf("Connected to Crowd Control!");
-            break;
-        }
-    }
-
-    while (connected && CVar_GetS32("gCrowdControl", 0) && tcpsock) {
-        int len = SDLNet_TCP_Recv(tcpsock, &received, sizeof(received));
-
-        if (!len || !tcpsock || len == -1) {
-            printf("SDLNet_TCP_Recv: %s\n", SDLNet_GetError());
-            break;
+            SDLNet_TCP_AddSocket(socketSet, tcpsock);
         }
 
-        try {
-            nlohmann::json dataReceived = nlohmann::json::parse(received);
+        // Listen to socket messages
+        while (connected && tcpsock && isEnabled) {
+            // we check first if socket has data, to not block in the TCP_Recv
+            int socketsReady = SDLNet_CheckSockets(socketSet, 0);
 
-            CCPacket* packet = new CCPacket();
-            packet->packetId = dataReceived["id"];
-            auto parameters = dataReceived["parameters"];
-            if (parameters.size() > 0) {
-                packet->effectValue = dataReceived["parameters"][0];
-            }
-            packet->effectType = dataReceived["code"].get<std::string>();
-
-            if (packet->effectType == "high_gravity" ||
-                packet->effectType == "low_gravity") {
-                packet->effectCategory = "gravity";
-                packet->timeRemaining = 30000;
-            }
-            else if (packet->effectType == "damage_multiplier"
-                        || packet->effectType == "defense_multiplier"
-            ) {
-                packet->effectCategory = "defense";
-                packet->timeRemaining = 30000;
-            }
-            else if (packet->effectType == "giant_link" ||
-                packet->effectType == "minish_link" ||
-                packet->effectType == "invisible" ||
-                packet->effectType == "paper_link") {
-                packet->effectCategory = "link_size";
-                packet->timeRemaining = 30000;
-            }
-            else if (packet->effectType == "freeze" ||
-                packet->effectType == "damage" ||
-                packet->effectType == "heal" ||
-                packet->effectType == "knockback" ||
-                packet->effectType == "electrocute" ||
-                packet->effectType == "burn" ||
-                packet->effectType == "kill") {
-                packet->effectCategory = "link_damage";
-            }
-            else if (packet->effectType == "hover_boots" ||
-                packet->effectType == "iron_boots") {
-                packet->effectCategory = "boots";
-                packet->timeRemaining = 30000;
-            }
-            else if (packet->effectType == "add_heart_container" ||
-                packet->effectType == "remove_heart_container") {
-                packet->effectCategory = "heart_container";
-            }
-            else if (packet->effectType == "no_ui") {
-                packet->effectCategory = "ui";
-                packet->timeRemaining = 60000;
-            }
-            else if (packet->effectType == "fill_magic" ||
-                packet->effectType == "empty_magic") {
-                packet->effectCategory = "magic";
-            }
-            else if (packet->effectType == "ohko") {
-                packet->effectCategory = "ohko";
-                packet->timeRemaining = 30000;
-            }
-            else if (packet->effectType == "pacifist") {
-                packet->effectCategory = "pacifist";
-                packet->timeRemaining = 15000;
-            }
-            else if (packet->effectType == "rainstorm") {
-                packet->effectCategory = "weather";
-                packet->timeRemaining = 30000;
-            }
-            else if (packet->effectType == "reverse") {
-                packet->effectCategory = "controls";
-                packet->timeRemaining = 60000;
-            }
-            else if (packet->effectType == "add_rupees"
-                        || packet->effectType == "remove_rupees"
-            ) {
-                packet->effectCategory = "rupees";
-            }
-            else if (packet->effectType == "increase_speed"
-                        || packet->effectType == "decrease_speed"
-            ) {
-                packet->effectCategory = "speed";
-                packet->timeRemaining = 30000;
-            }
-            else if (packet->effectType == "no_z") {
-                packet->effectCategory = "no_z";
-                packet->timeRemaining = 30000;
-            }
-            else if (packet->effectType == "spawn_wallmaster" ||
-                packet->effectType == "spawn_arwing" ||
-                packet->effectType == "spawn_darklink" ||
-                packet->effectType == "spawn_stalfos" ||
-                packet->effectType == "spawn_wolfos" ||
-                packet->effectType == "spawn_freezard" ||
-                packet->effectType == "spawn_keese" ||
-                packet->effectType == "spawn_icekeese" ||
-                packet->effectType == "spawn_firekeese" ||
-                packet->effectType == "spawn_tektite" ||
-                packet->effectType == "spawn_likelike" ||
-                packet->effectType == "cucco_storm") {
-                packet->effectCategory = "spawn";
-            }
-            else {
-                packet->effectCategory = "none";
-                packet->timeRemaining = 0;
+            if (socketsReady == -1) {
+                SPDLOG_ERROR("[CrowdControl] SDLNet_CheckSockets: {}", SDLNet_GetError());
+                break;
             }
 
-            // Check if running effect is possible
-            EffectResult effectResult = ExecuteEffect(packet->effectType.c_str(), packet->effectValue, 1);
-            if (effectResult == EffectResult::Retry || effectResult == EffectResult::Failure) {
-                nlohmann::json dataSend;
-                dataSend["id"] = packet->packetId;
-                dataSend["type"] = 0;
-                dataSend["timeRemaining"] = packet->timeRemaining;
-                dataSend["status"] = effectResult;
+            if (socketsReady == 0) {
+                continue;
+            }
 
-                std::string jsonResponse = dataSend.dump();
-                SDLNet_TCP_Send(tcpsock, jsonResponse.c_str(), jsonResponse.size() + 1);
+            int len = SDLNet_TCP_Recv(tcpsock, &received, sizeof(received));
+            if (!len || !tcpsock || len == -1) {
+                SPDLOG_ERROR("[CrowdControl] SDLNet_TCP_Recv: {}", SDLNet_GetError());
+                break;
+            }
+
+            Effect* incomingEffect = ParseMessage(received);
+            if (!incomingEffect) {
+                continue;
+            }
+
+            // If effect is not a timed effect, execute and return result.
+            if (!incomingEffect->timeRemaining) {
+                EffectResult result = CrowdControl::ExecuteEffect(incomingEffect);
+                EmitMessage(tcpsock, incomingEffect->id, incomingEffect->timeRemaining, result);
             } else {
-                bool anotherEffectOfCategoryActive = false;
-                for (CCPacket* pack : receivedCommands) {
-                    if (pack != packet && pack->effectCategory == packet->effectCategory && pack->packetId < packet->packetId) {
-                        anotherEffectOfCategoryActive = true;
-
-                        nlohmann::json dataSend;
-                        dataSend["id"] = packet->packetId;
-                        dataSend["type"] = 0;
-                        dataSend["timeRemaining"] = packet->timeRemaining;
-                        dataSend["status"] = EffectResult::Retry;
-
-                        std::string jsonResponse = dataSend.dump();
-                        SDLNet_TCP_Send(tcpsock, jsonResponse.c_str(), jsonResponse.size() + 1);
-
+                // If another timed effect is already active that conflicts with the incoming effect.
+                bool isConflictingEffectActive = false;
+                for (Effect* effect : activeEffects) {
+                    if (effect != incomingEffect && effect->category == incomingEffect->category && effect->id < incomingEffect->id) {
+                        isConflictingEffectActive = true;
+                        EmitMessage(tcpsock, incomingEffect->id, incomingEffect->timeRemaining, EffectResult::Retry);
                         break;
                     }
                 }
 
-                if (anotherEffectOfCategoryActive != true) {
-                    receivedCommandsMutex.lock();
-                    receivedCommands.push_back(packet);
-                    receivedCommandsMutex.unlock();
-                    std::thread t = std::thread(&CrowdControl::RunCrowdControl, this, packet);
-                    t.detach();
+                if (!isConflictingEffectActive) {
+                    // Check if effect can be applied, if it can't, let CC know.
+                    EffectResult result = CrowdControl::CanApplyEffect(incomingEffect);
+                    if (result == EffectResult::Retry || result == EffectResult::Failure) {
+                        EmitMessage(tcpsock, incomingEffect->id, incomingEffect->timeRemaining, result);
+                        continue;
+                    }
+
+                    activeEffectsMutex.lock();
+                    activeEffects.push_back(incomingEffect);
+                    activeEffectsMutex.unlock();
                 }
             }
-        } catch (nlohmann::json::parse_error& e) {
-            printf("Error parsing JSON: %s\n", e.what());
-            continue;
         }
-    }
 
-    if (connected) {
-        SDLNet_TCP_Close(tcpsock);
-        SDLNet_Quit();
-        connected = false;
+        if (connected) {
+            SDLNet_TCP_Close(tcpsock);
+            connected = false;
+            SPDLOG_TRACE("[CrowdControl] Ending Listen thread...");
+        }
     }
 }
 
-CrowdControl::EffectResult CrowdControl::ExecuteEffect(std::string effectId, uint32_t value, bool dryRun) {
-    // Don't execute effect and don't advance timer when the player is not in a proper loaded savefile
-    // and when they're busy dying.
-    if (gGlobalCtx == NULL || gGlobalCtx->gameOverCtx.state > 0 || gSaveContext.fileNum < 0 || gSaveContext.fileNum > 2) {
-        return EffectResult::Retry;
-    }
+void CrowdControl::ProcessActiveEffects() {
+    while (isEnabled) {
+        // We only want to send events when status changes, on start we send Success.
+        // If it fails at some point, we send Pause, and when it starts to succeed again we send Success.
+        // CC uses this to pause the timer on the overlay.
+        activeEffectsMutex.lock();
+        auto it = activeEffects.begin();
 
-    Player* player = GET_PLAYER(gGlobalCtx);
+        while (it != activeEffects.end()) {
+            Effect *effect = *it;
+            EffectResult result = CrowdControl::ExecuteEffect(effect);
 
-    if (player != NULL) {
-        if (effectId == "add_heart_container") {
-            if (gSaveContext.healthCapacity >= 0x140) {
-                return EffectResult::Failure;
-            }
-            
-            if (dryRun == 0) CMD_EXECUTE("add_heart_container");
-            return EffectResult::Success;
-        } else if (effectId == "remove_heart_container") {
-            if ((gSaveContext.healthCapacity - 0x10) <= 0) {
-                return EffectResult::Failure;
-            }
-            
-            if (dryRun == 0) CMD_EXECUTE("remove_heart_container");
-            return EffectResult::Success;
-        } else if (effectId == "fill_magic") {
-            if (!gSaveContext.magicAcquired) {
-                return EffectResult::Failure;
-            }
-
-            if (gSaveContext.magic >= (gSaveContext.doubleMagic + 1) + 0x30) {
-                return EffectResult::Failure;
-            }
-
-            if (dryRun == 0) CMD_EXECUTE("fill_magic");
-            return EffectResult::Success;
-        } else if (effectId == "empty_magic") {
-            if (!gSaveContext.magicAcquired || gSaveContext.magic <= 0) {
-                return EffectResult::Failure;
-            }
-
-            if (dryRun == 0) CMD_EXECUTE("empty_magic");
-            return EffectResult::Success;
-        } else if (effectId == "add_rupees") {
-            if (dryRun == 0) CMD_EXECUTE(std::format("update_rupees {}", value));
-            return EffectResult::Success;
-        } else if (effectId == "remove_rupees") {
-            if (gSaveContext.rupees - value < 0) {
-                return EffectResult::Failure;
-            }
-
-            if (dryRun == 0) CMD_EXECUTE(std::format("update_rupees -{}", value));
-            return EffectResult::Success;
-        }
-    }
-
-    if (player != NULL && !Player_InBlockingCsMode(gGlobalCtx, player) && gGlobalCtx->pauseCtx.state == 0
-                                                                       && gGlobalCtx->msgCtx.msgMode == 0) {
-        if (effectId == "high_gravity") {
-            if (dryRun == 0) CMD_EXECUTE("gravity 2");
-            return EffectResult::Success;
-        } else if (effectId == "low_gravity") {
-            if (dryRun == 0) CMD_EXECUTE("gravity 0");
-            return EffectResult::Success;
-        } else if (effectId == "kill"
-                    || effectId == "freeze"
-                    || effectId == "burn"
-                    || effectId == "electrocute"
-                    || effectId == "cucco_storm"
-        ) {
-            if (PlayerGrounded(player)) {
-                if (dryRun == 0) CMD_EXECUTE(std::format("{}", effectId));
-                return EffectResult::Success;
-            }
-            return EffectResult::Failure;
-        } else if (effectId == "heal"
-                    || effectId == "knockback"
-        ) {
-            if (dryRun == 0) CMD_EXECUTE(std::format("{} {}", effectId, value));
-            return EffectResult::Success;
-        } else if (effectId == "giant_link"
-                    || effectId == "minish_link"
-                    || effectId == "no_ui"
-                    || effectId == "invisible"
-                    || effectId == "paper_link"
-                    || effectId == "no_z"
-                    || effectId == "ohko"
-                    || effectId == "pacifist"
-                    || effectId == "rainstorm"
-        ) {
-            if (dryRun == 0) CMD_EXECUTE(std::format("{} 1", effectId));
-            return EffectResult::Success;
-        } else if (effectId == "reverse") {
-            if (dryRun == 0) CMD_EXECUTE("reverse_controls 1"); 
-            return EffectResult::Success;
-        } else if (effectId == "iron_boots") {
-            if (dryRun == 0) CMD_EXECUTE("boots iron");
-            return EffectResult::Success;
-        } else if (effectId == "hover_boots") {
-            if (dryRun == 0) CMD_EXECUTE("boots hover");
-            return EffectResult::Success;
-        } else if (effectId == "give_dekushield") {
-            if (dryRun == 0) CMD_EXECUTE("givedekushield");
-            return EffectResult::Success;
-        } else if (effectId == "spawn_wallmaster" 
-            || effectId == "spawn_arwing" 
-            || effectId == "spawn_darklink" 
-            || effectId == "spawn_stalfos" 
-            || effectId == "spawn_wolfos" 
-            || effectId == "spawn_freezard" 
-            || effectId == "spawn_keese" 
-            || effectId == "spawn_icekeese"
-            || effectId == "spawn_firekeese"
-            || effectId == "spawn_tektite"
-            || effectId == "spawn_likelike"
-        ) {
-            if (dryRun == 0) {
-                if (CrowdControl::SpawnEnemy(effectId)) {
-                    return EffectResult::Success;
+            if (result == EffectResult::Success) {
+                // If time remaining has reached 0, we have finished the effect.
+                if (effect->timeRemaining <= 0) {
+                    it = activeEffects.erase(std::remove(activeEffects.begin(), activeEffects.end(), effect),
+                                        activeEffects.end());
+                    GameInteractor::RemoveEffect(effect->giEffect);
+                    delete effect;
                 } else {
-                    return EffectResult::Failure;
+                    // If we have a success after previously being paused, tell CC to resume timer.
+                    if (effect->isPaused) {
+                        effect->isPaused = false;
+                        EmitMessage(tcpsock, effect->id, effect->timeRemaining, EffectResult::Resumed);
+                    // If not paused before, subtract time from the timer and send a Success event if
+                    // the result is different from the last time this was ran.
+                    // Timed events are put on a thread that runs once per second.
+                    } else {
+                        effect->timeRemaining -= 1000;
+                        if (result != effect->lastExecutionResult) {
+                            effect->lastExecutionResult = result;
+                            EmitMessage(tcpsock, effect->id, effect->timeRemaining, EffectResult::Success);
+                        }
+                    }
+                    it++;
                 }
+            } else { // Timed effects only do Success or Retry
+                if (!effect->isPaused && effect->timeRemaining > 0) {
+                    effect->isPaused = true;
+                    EmitMessage(tcpsock, effect->id, effect->timeRemaining, EffectResult::Paused);
+                }
+                it++;
             }
-            return EffectResult::Success;
-        } else if (effectId == "increase_speed") {
-           if (dryRun == 0) CMD_EXECUTE("speed_modifier 2");
-            return EffectResult::Success;
-        } else if (effectId == "decrease_speed") {
-           if (dryRun == 0) CMD_EXECUTE("speed_modifier -2");
-            return EffectResult::Success;
-        } else if (effectId == "damage_multiplier") {
-            if (dryRun == 0) CMD_EXECUTE(std::format("defense_modifier -{}", value));
-            return EffectResult::Success;
-        } else if (effectId == "defense_multiplier") {
-            if (dryRun == 0) CMD_EXECUTE(std::format("defense_modifier {}", value));
-            return EffectResult::Success;
-        } else if (effectId == "damage") {
-            if ((gSaveContext.healthCapacity - 0x10) <= 0) {
-                return EffectResult::Failure;
-            }
-            
-            if (dryRun == 0) CMD_EXECUTE(std::format("{} {}", effectId, value));
-            return EffectResult::Success;
+        }
+
+        activeEffectsMutex.unlock();
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+
+    SPDLOG_TRACE("[CrowdControl] Ending Process thread...");
+}
+
+void CrowdControl::EmitMessage(TCPsocket socket, uint32_t eventId, long timeRemaining, EffectResult status) {
+    nlohmann::json payload;
+
+    payload["id"] = eventId;
+    payload["type"] = 0;
+    payload["timeRemaining"] = timeRemaining;
+    payload["status"] = status;
+
+    std::string jsonPayload = payload.dump();
+    SDLNet_TCP_Send(socket, jsonPayload.c_str(), jsonPayload.size() + 1);
+}
+
+CrowdControl::EffectResult CrowdControl::ExecuteEffect(Effect* effect) {
+    GameInteractionEffectQueryResult giResult;
+    if (effect->category == kEffectCatSpawnEnemy) {
+        giResult = GameInteractor::RawAction::SpawnEnemyWithOffset(effect->spawnParams[0], effect->spawnParams[1]);
+    } else if (effect->category == kEffectCatSpawnActor) {
+        giResult = GameInteractor::RawAction::SpawnActor(effect->spawnParams[0], effect->spawnParams[1]);
+    } else {
+        giResult = GameInteractor::ApplyEffect(effect->giEffect);
+    }
+
+    return TranslateGiEnum(giResult);
+}
+
+/// Checks if effect can be applied -- should not be used to check for spawn enemy effects.
+CrowdControl::EffectResult CrowdControl::CanApplyEffect(Effect* effect) {
+    assert(effect->category != kEffectCatSpawnEnemy || effect->category != kEffectCatSpawnActor);
+    GameInteractionEffectQueryResult giResult = GameInteractor::CanApplyEffect(effect->giEffect);
+
+    return TranslateGiEnum(giResult);
+}
+
+CrowdControl::EffectResult CrowdControl::TranslateGiEnum(GameInteractionEffectQueryResult giResult) {
+    // Translate GameInteractor result into CC's own enums.
+    EffectResult result;
+    if (giResult == GameInteractionEffectQueryResult::Possible) {
+        result = EffectResult::Success;
+    } else if (giResult == GameInteractionEffectQueryResult::TemporarilyNotPossible) {
+        result = EffectResult::Retry;
+    } else {
+        result = EffectResult::Failure;
+    }
+
+    return result;
+}
+
+CrowdControl::Effect* CrowdControl::ParseMessage(char payload[512]) {
+    nlohmann::json dataReceived = nlohmann::json::parse(payload, nullptr, false);
+    if (dataReceived.is_discarded()) {
+        SPDLOG_ERROR("Error parsing JSON");
+        return nullptr;
+    }
+
+    Effect* effect = new Effect();
+    effect->lastExecutionResult = EffectResult::Initiate;
+    effect->id = dataReceived["id"];
+    auto parameters = dataReceived["parameters"];
+    uint32_t receivedParameter = 0;
+    auto effectName = dataReceived["code"].get<std::string>();
+
+    if (parameters.size() > 0) {
+        receivedParameter = dataReceived["parameters"][0];
+    }
+
+    // Assign GameInteractionEffect + values to CC effect.
+    // Categories are mostly used for checking for conflicting timed effects.
+    switch (effectStringToEnum[effectName]) {
+
+        // Spawn Enemies and Objects
+        case kEffectSpawnCuccoStorm:
+            effect->spawnParams[0] = ACTOR_EN_NIW;
+            effect->category = kEffectCatSpawnActor;
+            break;
+        case kEffectSpawnLitBomb:
+            effect->spawnParams[0] = ACTOR_EN_BOM;
+            effect->category = kEffectCatSpawnActor;
+            break;
+        case kEffectSpawnExplosion:
+            effect->spawnParams[0] = ACTOR_EN_BOM;
+            effect->spawnParams[1] = 1;
+            effect->category = kEffectCatSpawnActor;
+            break;
+        case kEffectSpawnArwing:
+            effect->spawnParams[0] = ACTOR_EN_CLEAR_TAG;
+            // Parameter for no cutscene Arwing
+            effect->spawnParams[1] = 1;
+            effect->category = kEffectCatSpawnEnemy;
+            break;
+        case kEffectSpawnDarklink:
+            effect->spawnParams[0] = ACTOR_EN_TORCH2;
+            effect->category = kEffectCatSpawnEnemy;
+            break;
+        case kEffectSpawnIronKnuckle:
+            effect->spawnParams[0] = ACTOR_EN_IK;
+            // Parameter for black standing Iron Knuckle
+            effect->spawnParams[1] = 2;
+            effect->category = kEffectCatSpawnEnemy;
+            break;
+        case kEffectSpawnStalfos:
+            effect->spawnParams[0] = ACTOR_EN_TEST;
+            // Parameter for gravity-obeying Stalfos
+            effect->spawnParams[1] = 2;
+            effect->category = kEffectCatSpawnEnemy;
+            break;
+        case kEffectSpawnFreezard:
+            effect->spawnParams[0] = ACTOR_EN_FZ;
+            effect->category = kEffectCatSpawnEnemy;
+            break;
+        case kEffectSpawnLikeLike:
+            effect->spawnParams[0] = ACTOR_EN_RR;
+            effect->category = kEffectCatSpawnEnemy;
+            break;
+        case kEffectSpawnGibdo:
+            effect->spawnParams[0] = ACTOR_EN_RD;
+            // Parameter for Gibdo
+            effect->spawnParams[1] = 32766;
+            effect->category = kEffectCatSpawnEnemy;
+            break;
+        case kEffectSpawnKeese:
+            effect->spawnParams[0] = ACTOR_EN_FIREFLY;
+            // Parameter for normal keese
+            effect->spawnParams[1] = 2;
+            effect->category = kEffectCatSpawnEnemy;
+            break;
+        case kEffectSpawnIceKeese:
+            effect->spawnParams[0] = ACTOR_EN_FIREFLY;
+            // Parameter for ice keese
+            effect->spawnParams[1] = 4;
+            effect->category = kEffectCatSpawnEnemy;
+            break;
+        case kEffectSpawnFireKeese:
+            effect->spawnParams[0] = ACTOR_EN_FIREFLY;
+            // Parameter for fire keese
+            effect->spawnParams[1] = 1;
+            effect->category = kEffectCatSpawnEnemy;
+            break;
+        case kEffectSpawnWolfos:
+            effect->spawnParams[0] = ACTOR_EN_WF;
+            effect->category = kEffectCatSpawnEnemy;
+            break;
+        case kEffectSpawnWallmaster:
+            effect->spawnParams[0] = ACTOR_EN_WALLMAS;
+            effect->category = kEffectCatSpawnEnemy;
+            break;
+
+        // Link Modifiers
+        case kEffectTakeHalfDamage:
+            effect->category = kEffectCatDamageTaken;
+            effect->timeRemaining = 30000;
+            effect->giEffect = new GameInteractionEffect::ModifyDefenseModifier();
+            effect->giEffect->parameters[0] = 2;
+            break;
+        case kEffectTakeDoubleDamage:
+            effect->category = kEffectCatDamageTaken;
+            effect->timeRemaining = 30000;
+            effect->giEffect = new GameInteractionEffect::ModifyDefenseModifier();
+            effect->giEffect->parameters[0] = -2;
+            break;
+        case kEffectOneHitKo:
+            effect->category = kEffectCatOhko;
+            effect->timeRemaining = 30000;
+            effect->giEffect = new GameInteractionEffect::OneHitKO();
+            break;
+        case kEffectInvincibility:
+            effect->category = kEffectCatInvincible;
+            effect->timeRemaining = 15000;
+            effect->giEffect = new GameInteractionEffect::PlayerInvincibility();
+            break;
+            break;
+        case kEffectIncreaseSpeed:
+            effect->category = kEffectCatSpeed;
+            effect->timeRemaining = 30000;
+            effect->giEffect = new GameInteractionEffect::ModifyRunSpeedModifier();
+            effect->giEffect->parameters[0] = 2;
+            break;
+        case kEffectDecreaseSpeed:
+            effect->category = kEffectCatSpeed;
+            effect->timeRemaining = 30000;
+            effect->giEffect = new GameInteractionEffect::ModifyRunSpeedModifier();
+            effect->giEffect->parameters[0] = -2;
+            break;
+        case kEffectLowGravity:
+            effect->category = kEffectCatGravity;
+            effect->timeRemaining = 30000;
+            effect->giEffect = new GameInteractionEffect::ModifyGravity();
+            effect->giEffect->parameters[0] = GI_GRAVITY_LEVEL_LIGHT;
+            break;
+        case kEffectHighGravity:
+            effect->category = kEffectCatGravity;
+            effect->timeRemaining = 30000;
+            effect->giEffect = new GameInteractionEffect::ModifyGravity();
+            effect->giEffect->parameters[0] = GI_GRAVITY_LEVEL_HEAVY;
+            break;
+        case kEffectForceIronBoots:
+            effect->category = kEffectCatBoots;
+            effect->timeRemaining = 30000;
+            effect->giEffect = new GameInteractionEffect::ForceEquipBoots();
+            effect->giEffect->parameters[0] = PLAYER_BOOTS_IRON;
+            break;
+        case kEffectForceHoverBoots:
+            effect->category = kEffectCatBoots;
+            effect->timeRemaining = 30000;
+            effect->giEffect = new GameInteractionEffect::ForceEquipBoots();
+            effect->giEffect->parameters[0] = PLAYER_BOOTS_HOVER;
+            break;
+        case kEffectSlipperyFloor:
+            effect->category = kEffectCatSlipperyFloor;
+            effect->timeRemaining = 30000;
+            effect->giEffect = new GameInteractionEffect::SlipperyFloor();
+            break;
+        case kEffectNoLedgeGrabs:
+            effect->category = kEffectCatNoLedgeGrabs;
+            effect->timeRemaining = 30000;
+            effect->giEffect = new GameInteractionEffect::DisableLedgeGrabs();
+            break;
+        case kEffectRandomWind:
+            effect->category = kEffectCatRandomWind;
+            effect->timeRemaining = 30000;
+            effect->giEffect = new GameInteractionEffect::RandomWind();
+            break;
+        case kEffectRandomBonks:
+            effect->category = kEffectCatRandomBonks;
+            effect->timeRemaining = 60000;
+            effect->giEffect = new GameInteractionEffect::RandomBonks();
+            break;
+
+        // Hurt or Heal Link
+        case kEffectEmptyHeart:
+            effect->giEffect = new GameInteractionEffect::ModifyHealth();
+            effect->giEffect->parameters[0] = receivedParameter * -1;
+            break;
+        case kEffectFillHeart:
+            effect->giEffect = new GameInteractionEffect::ModifyHealth();
+            break;
+        case kEffectKnockbackLinkWeak:
+            effect->giEffect = new GameInteractionEffect::KnockbackPlayer();
+            effect->giEffect->parameters[0] = 1;
+            break;
+        case kEffectKnockbackLinkStrong:
+            effect->giEffect = new GameInteractionEffect::KnockbackPlayer();
+            effect->giEffect->parameters[0] = 3;
+            break;
+        case kEffectKnockbackLinkMega:
+            effect->giEffect = new GameInteractionEffect::KnockbackPlayer();
+            effect->giEffect->parameters[0] = 6;
+            break;
+        case kEffectBurnLink:
+            effect->giEffect = new GameInteractionEffect::BurnPlayer();
+            break;
+        case kEffectFreezeLink:
+            effect->giEffect = new GameInteractionEffect::FreezePlayer();
+            break;
+        case kEffectElectrocuteLink:
+            effect->giEffect = new GameInteractionEffect::ElectrocutePlayer();
+            break;
+        case kEffectKillLink:
+            effect->giEffect = new GameInteractionEffect::SetPlayerHealth();
+            effect->giEffect->parameters[0] = 0;
+            break;
+
+        // Give Items and Consumables
+        case kEffectAddHeartContainer:
+            effect->giEffect = new GameInteractionEffect::ModifyHeartContainers();
+            effect->giEffect->parameters[0] = 1;
+            break;
+        case kEffectFillMagic:
+            effect->giEffect = new GameInteractionEffect::FillMagic();
+            break;
+        case kEffectAddRupees:
+            effect->giEffect = new GameInteractionEffect::ModifyRupees();
+            break;
+        case kEffectGiveDekuShield:
+            effect->giEffect = new GameInteractionEffect::GiveOrTakeShield();
+            effect->giEffect->parameters[0] = ITEM_SHIELD_DEKU;
+            break;
+        case kEffectGiveHylianShield:
+            effect->giEffect = new GameInteractionEffect::GiveOrTakeShield();
+            effect->giEffect->parameters[0] = ITEM_SHIELD_HYLIAN;
+            break;
+        case kEffectRefillSticks:
+            effect->giEffect = new GameInteractionEffect::AddOrTakeAmmo();
+            effect->giEffect->parameters[1] = ITEM_STICK;
+            break;
+        case kEffectRefillNuts:
+            effect->giEffect = new GameInteractionEffect::AddOrTakeAmmo();
+            effect->giEffect->parameters[1] = ITEM_NUT;
+            break;
+        case kEffectRefillBombs:
+            effect->giEffect = new GameInteractionEffect::AddOrTakeAmmo();
+            effect->giEffect->parameters[1] = ITEM_BOMB;
+            break;
+        case kEffectRefillSeeds:
+            effect->giEffect = new GameInteractionEffect::AddOrTakeAmmo();
+            effect->giEffect->parameters[1] = ITEM_SLINGSHOT;
+            break;
+        case kEffectRefillArrows:
+            effect->giEffect = new GameInteractionEffect::AddOrTakeAmmo();
+            effect->giEffect->parameters[1] = ITEM_BOW;
+            break;
+        case kEffectRefillBombchus:
+            effect->giEffect = new GameInteractionEffect::AddOrTakeAmmo();
+            effect->giEffect->parameters[1] = ITEM_BOMBCHU;
+            break;
+
+        // Take Items and Consumables
+        case kEffectRemoveHeartContainer:
+            effect->giEffect = new GameInteractionEffect::ModifyHeartContainers();
+            effect->giEffect->parameters[0] = -1;
+            break;
+        case kEffectEmptyMagic:
+            effect->giEffect = new GameInteractionEffect::EmptyMagic();
+            break;
+        case kEffectRemoveRupees:
+            effect->giEffect = new GameInteractionEffect::ModifyRupees();
+            effect->giEffect->parameters[0] = receivedParameter * -1;
+            break;
+        case kEffectTakeDekuShield:
+            effect->giEffect = new GameInteractionEffect::GiveOrTakeShield();
+            effect->giEffect->parameters[0] = -ITEM_SHIELD_DEKU;
+            break;
+        case kEffectTakeHylianShield:
+            effect->giEffect = new GameInteractionEffect::GiveOrTakeShield();
+            effect->giEffect->parameters[0] = -ITEM_SHIELD_HYLIAN;
+            break;
+        case kEffectTakeSticks:
+            effect->giEffect = new GameInteractionEffect::AddOrTakeAmmo();
+            effect->giEffect->parameters[0] = receivedParameter * -1;
+            effect->giEffect->parameters[1] = ITEM_STICK;
+            break;
+        case kEffectTakeNuts:
+            effect->giEffect = new GameInteractionEffect::AddOrTakeAmmo();
+            effect->giEffect->parameters[0] = receivedParameter * -1;
+            effect->giEffect->parameters[1] = ITEM_NUT;
+            break;
+        case kEffectTakeBombs:
+            effect->giEffect = new GameInteractionEffect::AddOrTakeAmmo();
+            effect->giEffect->parameters[0] = receivedParameter * -1;
+            effect->giEffect->parameters[1] = ITEM_BOMB;
+            break;
+        case kEffectTakeSeeds:
+            effect->giEffect = new GameInteractionEffect::AddOrTakeAmmo();
+            effect->giEffect->parameters[0] = receivedParameter * -1;
+            effect->giEffect->parameters[1] = ITEM_SLINGSHOT;
+            break;
+        case kEffectTakeArrows:
+            effect->giEffect = new GameInteractionEffect::AddOrTakeAmmo();
+            effect->giEffect->parameters[0] = receivedParameter * -1;
+            effect->giEffect->parameters[1] = ITEM_BOW;
+            break;
+        case kEffectTakeBombchus:
+            effect->giEffect = new GameInteractionEffect::AddOrTakeAmmo();
+            effect->giEffect->parameters[0] = receivedParameter * -1;
+            effect->giEffect->parameters[1] = ITEM_BOMBCHU;
+            break;
+
+        // Link Size Modifiers
+        case kEffectGiantLink:
+            effect->category = kEffectCatLinkSize;
+            effect->timeRemaining = 30000;
+            effect->giEffect = new GameInteractionEffect::ModifyLinkSize();
+            effect->giEffect->parameters[0] = GI_LINK_SIZE_GIANT;
+            break;
+        case kEffectMinishLink:
+            effect->category = kEffectCatLinkSize;
+            effect->timeRemaining = 30000;
+            effect->giEffect = new GameInteractionEffect::ModifyLinkSize();
+            effect->giEffect->parameters[0] = GI_LINK_SIZE_MINISH;
+            break;
+        case kEffectPaperLink:
+            effect->category = kEffectCatLinkSize;
+            effect->timeRemaining = 30000;
+            effect->giEffect = new GameInteractionEffect::ModifyLinkSize();
+            effect->giEffect->parameters[0] = GI_LINK_SIZE_PAPER;
+            break;
+        case kEffectSquishedLink:
+            effect->category = kEffectCatLinkSize;
+            effect->timeRemaining = 30000;
+            effect->giEffect = new GameInteractionEffect::ModifyLinkSize();
+            effect->giEffect->parameters[0] = GI_LINK_SIZE_SQUISHED;
+            break;
+        case kEffectInvisibleLink:
+            effect->category = kEffectCatLinkSize;
+            effect->timeRemaining = 30000;
+            effect->giEffect = new GameInteractionEffect::InvisibleLink();
+            break;
+
+        // Generic Effects
+        case kEffectRandomBombTimer:
+            effect->category = kEffectCatRandomBombFuseTimer;
+            effect->timeRemaining = 60000;
+            effect->giEffect = new GameInteractionEffect::RandomBombFuseTimer();
+            break;
+        case kEffectSetTimeToDawn:
+            effect->giEffect = new GameInteractionEffect::SetTimeOfDay();
+            effect->giEffect->parameters[0] = GI_TIMEOFDAY_DAWN;
+            break;
+        case kEffectSetTimeToDusk:
+            effect->giEffect = new GameInteractionEffect::SetTimeOfDay();
+            effect->giEffect->parameters[0] = GI_TIMEOFDAY_DUSK;
+            break;
+
+        // Visual Effects
+        case kEffectNoUi:
+            effect->category = kEffectCatUi;
+            effect->timeRemaining = 60000;
+            effect->giEffect = new GameInteractionEffect::NoUI();
+            break;
+        case kEffectRainstorm:
+            effect->category = kEffectCatWeather;
+            effect->timeRemaining = 30000;
+            effect->giEffect = new GameInteractionEffect::WeatherRainstorm();
+            break;
+        case kEffectDebugMode:
+            effect->category = kEffectCatDebugMode;
+            effect->timeRemaining = 30000;
+            effect->giEffect = new GameInteractionEffect::SetCollisionViewer();
+            break;
+        case kEffectRandomCosmetics:
+            effect->giEffect = new GameInteractionEffect::RandomizeCosmetics();
+            break;
+
+        // Controls
+        case kEffectNoZButton:
+            effect->category = kEffectCatNoZ;
+            effect->timeRemaining = 30000;
+            effect->giEffect = new GameInteractionEffect::DisableZTargeting();
+            break;
+        case kEffectReverseControls:
+            effect->category = kEffectCatReverseControls;
+            effect->timeRemaining = 60000;
+            effect->giEffect = new GameInteractionEffect::ReverseControls();
+            break;
+        case kEffectPacifistMode:
+            effect->category = kEffectCatPacifist;
+            effect->timeRemaining = 15000;
+            effect->giEffect = new GameInteractionEffect::PacifistMode();
+            break;
+        case kEffectPressRandomButtons:
+            effect->category = kEffectCatRandomButtons;
+            effect->timeRemaining = 30000;
+            effect->giEffect = new GameInteractionEffect::PressRandomButton();
+            effect->giEffect->parameters[0] = 30;
+            break;
+        case kEffectClearCbuttons:
+            effect->giEffect = new GameInteractionEffect::ClearAssignedButtons();
+            effect->giEffect->parameters[0] = GI_BUTTONS_CBUTTONS;
+            break;
+        case kEffectClearDpad:
+            effect->giEffect = new GameInteractionEffect::ClearAssignedButtons();
+            effect->giEffect->parameters[0] = GI_BUTTONS_DPAD;
+            break;
+
+        // Teleport Player
+        case kEffectTpLinksHouse:
+            effect->giEffect = new GameInteractionEffect::TeleportPlayer();
+            effect->giEffect->parameters[0] = GI_TP_DEST_LINKSHOUSE;
+            break;
+        case kEffectTpMinuet:
+            effect->giEffect = new GameInteractionEffect::TeleportPlayer();
+            effect->giEffect->parameters[0] = GI_TP_DEST_MINUET;
+            break;
+        case kEffectTpBolero:
+            effect->giEffect = new GameInteractionEffect::TeleportPlayer();
+            effect->giEffect->parameters[0] = GI_TP_DEST_BOLERO;
+            break;
+        case kEffectTpSerenade:
+            effect->giEffect = new GameInteractionEffect::TeleportPlayer();
+            effect->giEffect->parameters[0] = GI_TP_DEST_SERENADE;
+            break;
+        case kEffectTpRequiem:
+            effect->giEffect = new GameInteractionEffect::TeleportPlayer();
+            effect->giEffect->parameters[0] = GI_TP_DEST_REQUIEM;
+            break;
+        case kEffectTpNocturne:
+            effect->giEffect = new GameInteractionEffect::TeleportPlayer();
+            effect->giEffect->parameters[0] = GI_TP_DEST_NOCTURNE;
+            break;
+        case kEffectTpPrelude:
+            effect->giEffect = new GameInteractionEffect::TeleportPlayer();
+            effect->giEffect->parameters[0] = GI_TP_DEST_PRELUDE;
+            break;
+
+        // Tunic Color (Bidding War)
+        case kEffectTunicRed:
+            effect->giEffect = new GameInteractionEffect::SetCosmeticsColor();
+            effect->giEffect->parameters[0] = GI_COSMETICS_TUNICS;
+            effect->giEffect->parameters[1] = GI_COLOR_RED;
+            break;
+        case kEffectTunicGreen:
+            effect->giEffect = new GameInteractionEffect::SetCosmeticsColor();
+            effect->giEffect->parameters[0] = GI_COSMETICS_TUNICS;
+            effect->giEffect->parameters[1] = GI_COLOR_GREEN;
+            break;
+        case kEffectTunicBlue:
+            effect->giEffect = new GameInteractionEffect::SetCosmeticsColor();
+            effect->giEffect->parameters[0] = GI_COSMETICS_TUNICS;
+            effect->giEffect->parameters[1] = GI_COLOR_BLUE;
+            break;
+        case kEffectTunicOrange:
+            effect->giEffect = new GameInteractionEffect::SetCosmeticsColor();
+            effect->giEffect->parameters[0] = GI_COSMETICS_TUNICS;
+            effect->giEffect->parameters[1] = GI_COLOR_ORANGE;
+            break;
+        case kEffectTunicYellow:
+            effect->giEffect = new GameInteractionEffect::SetCosmeticsColor();
+            effect->giEffect->parameters[0] = GI_COSMETICS_TUNICS;
+            effect->giEffect->parameters[1] = GI_COLOR_YELLOW;
+            break;
+        case kEffectTunicPurple:
+            effect->giEffect = new GameInteractionEffect::SetCosmeticsColor();
+            effect->giEffect->parameters[0] = GI_COSMETICS_TUNICS;
+            effect->giEffect->parameters[1] = GI_COLOR_PURPLE;
+            break;
+        case kEffectTunicPink:
+            effect->giEffect = new GameInteractionEffect::SetCosmeticsColor();
+            effect->giEffect->parameters[0] = GI_COSMETICS_TUNICS;
+            effect->giEffect->parameters[1] = GI_COLOR_PINK;
+            break;
+        case kEffectTunicBrown:
+            effect->giEffect = new GameInteractionEffect::SetCosmeticsColor();
+            effect->giEffect->parameters[0] = GI_COSMETICS_TUNICS;
+            effect->giEffect->parameters[1] = GI_COLOR_BROWN;
+            break;
+        case kEffectTunicBlack:
+            effect->giEffect = new GameInteractionEffect::SetCosmeticsColor();
+            effect->giEffect->parameters[0] = GI_COSMETICS_TUNICS;
+            effect->giEffect->parameters[1] = GI_COLOR_BLACK;
+            break;
+
+        // Navi Color (Bidding War)
+        case kEffectNaviRed:
+            effect->giEffect = new GameInteractionEffect::SetCosmeticsColor();
+            effect->giEffect->parameters[0] = GI_COSMETICS_NAVI;
+            effect->giEffect->parameters[1] = GI_COLOR_RED;
+            break;
+        case kEffectNaviGreen:
+            effect->giEffect = new GameInteractionEffect::SetCosmeticsColor();
+            effect->giEffect->parameters[0] = GI_COSMETICS_NAVI;
+            effect->giEffect->parameters[1] = GI_COLOR_GREEN;
+            break;
+        case kEffectNaviBlue:
+            effect->giEffect = new GameInteractionEffect::SetCosmeticsColor();
+            effect->giEffect->parameters[0] = GI_COSMETICS_NAVI;
+            effect->giEffect->parameters[1] = GI_COLOR_BLUE;
+            break;
+        case kEffectNaviOrange:
+            effect->giEffect = new GameInteractionEffect::SetCosmeticsColor();
+            effect->giEffect->parameters[0] = GI_COSMETICS_NAVI;
+            effect->giEffect->parameters[1] = GI_COLOR_ORANGE;
+            break;
+        case kEffectNaviYellow:
+            effect->giEffect = new GameInteractionEffect::SetCosmeticsColor();
+            effect->giEffect->parameters[0] = GI_COSMETICS_NAVI;
+            effect->giEffect->parameters[1] = GI_COLOR_YELLOW;
+            break;
+        case kEffectNaviPurple:
+            effect->giEffect = new GameInteractionEffect::SetCosmeticsColor();
+            effect->giEffect->parameters[0] = GI_COSMETICS_NAVI;
+            effect->giEffect->parameters[1] = GI_COLOR_PURPLE;
+            break;
+        case kEffectNaviPink:
+            effect->giEffect = new GameInteractionEffect::SetCosmeticsColor();
+            effect->giEffect->parameters[0] = GI_COSMETICS_NAVI;
+            effect->giEffect->parameters[1] = GI_COLOR_PINK;
+            break;
+        case kEffectNaviBrown:
+            effect->giEffect = new GameInteractionEffect::SetCosmeticsColor();
+            effect->giEffect->parameters[0] = GI_COSMETICS_NAVI;
+            effect->giEffect->parameters[1] = GI_COLOR_BROWN;
+            break;
+        case kEffectNaviBlack:
+            effect->giEffect = new GameInteractionEffect::SetCosmeticsColor();
+            effect->giEffect->parameters[0] = GI_COSMETICS_NAVI;
+            effect->giEffect->parameters[1] = GI_COLOR_BLACK;
+            break;
+
+        // Link's Hair Color (Bidding War)
+        case kEffectHairRed:
+            effect->giEffect = new GameInteractionEffect::SetCosmeticsColor();
+            effect->giEffect->parameters[0] = GI_COSMETICS_HAIR;
+            effect->giEffect->parameters[1] = GI_COLOR_RED;
+            break;
+        case kEffectHairGreen:
+            effect->giEffect = new GameInteractionEffect::SetCosmeticsColor();
+            effect->giEffect->parameters[0] = GI_COSMETICS_HAIR;
+            effect->giEffect->parameters[1] = GI_COLOR_GREEN;
+            break;
+        case kEffectHairBlue:
+            effect->giEffect = new GameInteractionEffect::SetCosmeticsColor();
+            effect->giEffect->parameters[0] = GI_COSMETICS_HAIR;
+            effect->giEffect->parameters[1] = GI_COLOR_BLUE;
+            break;
+        case kEffectHairOrange:
+            effect->giEffect = new GameInteractionEffect::SetCosmeticsColor();
+            effect->giEffect->parameters[0] = GI_COSMETICS_HAIR;
+            effect->giEffect->parameters[1] = GI_COLOR_ORANGE;
+            break;
+        case kEffectHairYellow:
+            effect->giEffect = new GameInteractionEffect::SetCosmeticsColor();
+            effect->giEffect->parameters[0] = GI_COSMETICS_HAIR;
+            effect->giEffect->parameters[1] = GI_COLOR_YELLOW;
+            break;
+        case kEffectHairPurple:
+            effect->giEffect = new GameInteractionEffect::SetCosmeticsColor();
+            effect->giEffect->parameters[0] = GI_COSMETICS_HAIR;
+            effect->giEffect->parameters[1] = GI_COLOR_PURPLE;
+            break;
+        case kEffectHairPink:
+            effect->giEffect = new GameInteractionEffect::SetCosmeticsColor();
+            effect->giEffect->parameters[0] = GI_COSMETICS_HAIR;
+            effect->giEffect->parameters[1] = GI_COLOR_PINK;
+            break;
+        case kEffectHairBrown:
+            effect->giEffect = new GameInteractionEffect::SetCosmeticsColor();
+            effect->giEffect->parameters[0] = GI_COSMETICS_HAIR;
+            effect->giEffect->parameters[1] = GI_COLOR_BROWN;
+            break;
+        case kEffectHairBlack:
+            effect->giEffect = new GameInteractionEffect::SetCosmeticsColor();
+            effect->giEffect->parameters[0] = GI_COSMETICS_HAIR;
+            effect->giEffect->parameters[1] = GI_COLOR_BLACK;
+            break;
+
+        default:
+            break;
+    }
+
+    // If no value is specifically set, default to using whatever CC sends us.
+    // Values are used for various things depending on the effect, but they 
+    // usually represent the "amount" of an effect. Amount of hearts healed,
+    // strength of knockback, etc.
+    if (effect->giEffect != NULL) {
+        if (!effect->giEffect->parameters[0]) {
+            effect->giEffect->parameters[0] = receivedParameter;
         }
     }
 
-    return EffectResult::Retry;
+    return effect;
 }
 
-bool CrowdControl::SpawnEnemy(std::string effectId) {
-    Player* player = GET_PLAYER(gGlobalCtx);
-
-    int enemyId = 0;
-    int enemyParams = 0;
-    float posXOffset = 0;
-    float posYOffset = 0;
-    float posZOffset = 0;
-
-    if (effectId == "spawn_wallmaster") {
-        enemyId = 17;
-    } else if (effectId == "spawn_arwing") {
-        enemyId = 315;
-        enemyParams = 1;
-        posYOffset = 100;
-    } else if (effectId == "spawn_darklink") {
-        enemyId = 51;
-        posXOffset = 75;
-        posYOffset = 50;
-    } else if (effectId == "spawn_stalfos") {
-        enemyId = 2;
-        enemyParams = 2;
-        posXOffset = 75;
-        posYOffset = 50;
-    } else if (effectId == "spawn_wolfos") {
-        enemyId = 431;
-        posXOffset = 75;
-        posYOffset = 50;
-    } else if (effectId == "spawn_freezard") {
-        enemyId = 289;
-        posXOffset = 75;
-        posYOffset = 50;
-    } else if (effectId == "spawn_keese") {
-        enemyId = 19;
-        enemyParams = 2;
-        posXOffset = 75;
-        posYOffset = 50;
-    } else if (effectId == "spawn_icekeese") {
-        enemyId = 19;
-        enemyParams = 4;
-        posXOffset = 75;
-        posYOffset = 50;
-    } else if (effectId == "spawn_firekeese") {
-        enemyId = 19;
-        enemyParams = 1;
-        posXOffset = 75;
-        posYOffset = 50;
-    } else if (effectId == "spawn_tektite") {
-        enemyId = 27;
-        posXOffset = 75;
-        posYOffset = 50;
-    } else if (effectId == "spawn_likelike") {
-        enemyId = 221;
-        posXOffset = 75;
-        posYOffset = 50;
-    }
-
-    return Actor_Spawn(&gGlobalCtx->actorCtx, gGlobalCtx, enemyId, player->actor.world.pos.x + posXOffset,
-        player->actor.world.pos.y + posYOffset, player->actor.world.pos.z + posZOffset, 0, 0, 0, enemyParams);
-
-}
-
-void CrowdControl::RemoveEffect(std::string effectId) {
-    if (gGlobalCtx == NULL) {
-        return;
-    }
-
-    Player* player = GET_PLAYER(gGlobalCtx);
-
-    if (player != NULL) {
-        if (effectId == "giant_link"
-                || effectId == "minish_link"
-                || effectId == "no_ui"
-                || effectId == "invisible"
-                || effectId == "paper_link"
-                || effectId == "no_z"
-                || effectId == "ohko"
-                || effectId == "pacifist"
-                || effectId == "rainstorm"
-        ) {
-            CMD_EXECUTE(std::format("{} 0", effectId));
-            return;
-        } else if (effectId == "iron_boots" || effectId == "hover_boots") {
-            CMD_EXECUTE("boots kokiri");
-            return;
-        } else if (effectId == "high_gravity" || effectId == "low_gravity") {
-            CMD_EXECUTE("gravity 1");
-            return;
-        } else if (effectId == "reverse") {
-            CMD_EXECUTE("reverse_controls 0");
-            return;
-        } else if (effectId == "increase_speed"
-                    || effectId == "decrease_speed"
-        ) {
-            CMD_EXECUTE("speed_modifier 0");
-            return;
-        } else if (effectId == "damage_multiplier"
-                    || effectId == "defense_multiplier"
-        ) {
-            CMD_EXECUTE("defense_modifier 0");
-            return;
-        }
-    }
-}
 #endif

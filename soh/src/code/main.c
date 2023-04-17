@@ -1,9 +1,13 @@
+#ifdef _WIN32
+#include <Windows.h>
+#endif
+
 #include "global.h"
 #include "vt.h"
 #include <soh/Enhancements/bootcommands.h>
 #include "soh/OTRGlobals.h"
 
-#include <libultraship/CrashHandler.h>
+#include <libultraship/bridge.h>
 #include "soh/CrashHandlerExp.h"
 
 
@@ -50,10 +54,10 @@ int main(int argc, char** argv)
 #endif
 #endif
 {
-    CrashHandler_Init(CrashHandler_PrintSohData);
-    
     GameConsole_Init();
     InitOTR();
+    // TODO: Was moved to below InitOTR because it requires window to be setup. But will be late to catch crashes.
+    CrashHandlerRegisterCallback(CrashHandler_PrintSohData);
     BootCommands_Init();
 
     Main(0);
